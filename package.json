@@ -16,7 +16,7 @@
     "devDependencies": {
         "chrome-webstore-upload-cli": "4.0.2",
         "playwright": "^1.64.1",
-        "web-ext": "^10.7.0"
+        "web-ext": "^10.8.0"
     },
     "overrides": {
         "shell-quote": "^1.11.0"
