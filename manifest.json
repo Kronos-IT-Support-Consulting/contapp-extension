@@ -15,8 +15,9 @@
                 "https://account.contapp.ro/*",
                 "https://contabilitate.contapp.ro/*",
                 "https://declaratiaunica.contapp.ro/*",
-                "https://*.contapp.test/*",
-                "https://contapp.test/*"
+                "https://account.contapp.test/*",
+                "https://contabilitate.contapp.test/*",
+                "https://declaratiaunica.contapp.test/*"
             ],
             "js": ["content.js"],
             "run_at": "document_start"

@@ -6,8 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- A Safari (macOS) build: `build.sh` also writes `dist/safari` (`SAFARI_DEV=1` keeps the `contapp.test` hosts), and
+  `safari.sh` wraps it in the Xcode project Safari needs. In Safari the SPV requests run in an ANAF tab, since a
+  background request does not carry the client certificate and ANAF ends the session for it. Without one open, the
+  extension opens its own in the background and closes it after a minute without requests.
+- The Safari app is ready for the Mac App Store: version 1.0.0, *Productivity* category, no non-exempt encryption,
+  an app icon rendered from `icons/icon.svg` (`safari/app-icon.swift`) and a Romanian app window. `safari.sh` no
+  longer overwrites the committed Xcode project.
+- A `session_lost` answer is logged in the worker's console with the status and the URL it ended on.
+
 ### Changed
 
+- The development hosts mirror the production ones: `https://{account,contabilitate,declaratiaunica}.contapp.test/*`
+  instead of every `contapp.test` host.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or

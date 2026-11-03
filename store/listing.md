@@ -14,7 +14,7 @@ only ships new versions; these texts change only when edited here.
 | Support URL | `https://contapp.ro/contact`                                                   |
 | Support e-mail | `suport@contapp.ro`                                                            |
 | Privacy policy URL | `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
-| Visibility | Chrome: *Unlisted* · Edge: *Hidden* · Firefox: unlisted / self-distributed     |
+| Visibility | Chrome: *Unlisted* · Edge: *Hidden* · Firefox: unlisted / self-distributed · Mac App Store: unlisted |
 
 ### Short description
 
@@ -214,6 +214,185 @@ Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (p
 Testing end to end needs a ContApp account and a Romanian qualified certificate with SPV access; a screencast is available on request at suport@contapp.ro.
 ```
 
+## Mac App Store (Safari)
+
+Safari only installs extensions carried by a macOS app, so the Safari build is listed as a Mac app (`ro.contapp.spv`,
+the Xcode project in `safari/`). Fields in App Store Connect, in the order it asks for them. The limits are Apple's;
+the counts are of the texts below.
+
+### New app
+
+| Field | Value |
+|---|---|
+| Platform | macOS |
+| Name (max 30) | `ContApp SPV` |
+| Primary language | Romanian |
+| Bundle ID | `ro.contapp.spv` (register it first: developer.apple.com → Identifiers → App IDs, with `ro.contapp.spv.Extension`) |
+| SKU | `contapp-spv-macos` |
+
+### App information
+
+| Field | Value |
+|---|---|
+| Subtitle (max 30) | RO `Mesaje SPV ANAF în ContApp` (26) · EN `ANAF SPV messages in ContApp` (28) |
+| Primary category | Productivity |
+| Secondary category | Business |
+| Content rights | No third-party content |
+| Age rating | Every question *None* / *No* → 4+ |
+| Copyright | `2026 Kronos IT Support & Consulting S.R.L.` |
+| Support URL | `https://contapp.ro/contact` |
+| Marketing URL | `https://contapp.ro` |
+| Privacy policy URL | `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
+| Price | Free · Availability: all countries (Romania is the only one that matters) |
+
+Keywords (max 100, comma-separated, no spaces after commas; the name and subtitle already count, so they are not
+repeated):
+
+RO (94 characters):
+
+```
+spv,anaf,certificat digital,token,declaratii,contabilitate,fiscal,mesaje,cerere,contabil,firma
+```
+
+EN (95 characters):
+
+```
+spv,anaf,romania,tax,digital certificate,token,accounting,accountant,declaration,messages,inbox
+```
+
+Promotional text (max 170; can change without a new review):
+
+RO (161 characters):
+
+```
+Sincronizați mesajele din SPV ANAF în ContApp direct din Safari, cu certificatul digital pe care îl aveți deja. Nicio încărcare de certificat, niciun PIN salvat.
+```
+
+EN (147 characters):
+
+```
+Sync your ANAF SPV messages into ContApp straight from Safari, with the digital certificate you already have. No certificate upload, no stored PIN.
+```
+
+### Description — RO
+
+```
+ContApp SPV aduce în ContApp mesajele din Spațiul Privat Virtual (SPV) al ANAF, folosind certificatul digital calificat pe care îl aveți deja în Safari (token USB sau certificat din Keychain).
+
+Aplicația conține extensia de Safari ContApp SPV. După instalare, o activați o singură dată din Safari → Configurări → Extensii; aplicația vă arată unde.
+
+Ce face
+• Citește lista mesajelor din SPV, ca să le vedeți în ContApp la firma potrivită.
+• Descarcă documentele PDF din mesaje; ContApp le păstrează apoi în contul dumneavoastră.
+• Trimite către ANAF cererile de documente completate în ContApp; răspunsul apare ulterior ca mesaj nou.
+
+Serviciul SPV al ANAF răspunde numai după autentificarea cu certificat, iar o pagină web nu poate citi singură răspunsul. Extensia face legătura: pagina ContApp îi cere o adresă din serviciul SPV, Safari face autentificarea cu certificatul, iar extensia predă răspunsul ANAF, neschimbat, paginii ContApp. În timpul sincronizării, Safari deschide pentru scurt timp un tab ANAF, pe care extensia îl închide singură.
+
+Pentru cine este
+Pentru clienții ContApp (firme și contabili) care au un certificat digital cu acces la SPV. Aveți nevoie de un cont ContApp și de certificat pe acest Mac, cu programul tokenului instalat. Fără un cont ContApp, aplicația nu are nicio utilitate.
+
+Ce nu face
+• Nu vede PIN-ul și nu are acces la cheia privată: PIN-ul este cerut de macOS sau de programul tokenului.
+• Nu stochează nimic și nu are setări proprii.
+• Nu face nimic din proprie inițiativă: acționează doar când o pagină ContApp îi cere.
+• Nu accesează alte site-uri decât serviciul SPV al ANAF și paginile ContApp.
+• Nu folosește analiză de trafic, reclame sau cod încărcat de pe internet.
+
+Dezinstalare: ștergeți aplicația ContApp SPV din dosarul Aplicații. Mesajele și documentele deja sincronizate rămân în ContApp.
+
+Suport: suport@contapp.ro
+```
+
+### Description — EN
+
+```
+ContApp SPV brings the messages from ANAF's Virtual Private Space (SPV), the Romanian tax authority's online inbox, into ContApp, using the qualified digital certificate you already have in Safari (USB token or a certificate in the Keychain).
+
+The app carries the ContApp SPV Safari extension. After installing, turn it on once in Safari → Settings → Extensions; the app shows you where.
+
+What it does
+• Reads the SPV message list, so you see the messages in ContApp under the right company.
+• Downloads the PDF documents attached to messages; ContApp then keeps them in your account.
+• Sends to ANAF the document requests you fill in on ContApp; the answer later arrives as a new message.
+
+ANAF's SPV service only answers after certificate authentication, and a web page cannot read the answer by itself. The extension bridges the gap: the ContApp page asks it for an SPV address, Safari performs the certificate authentication, and the extension hands ANAF's response, unchanged, back to the ContApp page. While syncing, Safari briefly opens an ANAF tab, which the extension closes by itself.
+
+Who it is for
+ContApp customers (businesses and accountants) who hold a digital certificate with SPV access. You need a ContApp account and the certificate on this Mac, with the token software installed. Without a ContApp account the app does nothing useful.
+
+What it does not do
+• It never sees the PIN and has no access to the private key: the PIN is asked by macOS or the token software.
+• It stores nothing and has no settings of its own.
+• It does nothing on its own initiative: it only acts when a ContApp page asks.
+• It does not access any site other than ANAF's SPV service and ContApp pages.
+• It uses no analytics, no advertising and no code loaded from the internet.
+
+To uninstall, delete ContApp SPV from the Applications folder. Messages and documents already synced stay in ContApp.
+
+Support: suport@contapp.ro
+```
+
+### Screenshots
+
+Mac screenshots must be 16:10; the 1280×800 files in `store/screenshots/` qualify. Upload `01` to `05`. `06-instalare.png`
+shows Chrome: replace it for this listing with Safari → Settings → Extensions → ContApp SPV turned on, with its website
+access (`webserviced.anaf.ro`, the ContApp hosts) allowed, at 1280×800. The App Store shows no captions.
+
+### App Privacy
+
+Apple counts data as collected when it leaves the device and the developer keeps it longer than the request needs.
+The extension hands ANAF's answers to the ContApp page, which stores them in the user's ContApp account, so this
+matches the Chrome *Data usage* answers and the Firefox `data_collection_permissions`.
+
+| Question | Answer |
+|---|---|
+| Do you collect data from this app? | Yes |
+| Data types | **Financial Info → Other Financial Info** (tax documents, CUIs) · **Other Data → Other Data Types** (the certificate holder's CNP in the SPV answers) |
+| For each: linked to the user's identity? | Yes (stored in their ContApp account) |
+| For each: used for tracking? | No |
+| For each: purposes | App Functionality only |
+
+Everything else (contact info, health, location, identifiers, usage data, diagnostics, browsing history…): not collected.
+
+### Encryption
+
+Nothing to answer: the app declares `ITSAppUsesNonExemptEncryption = NO` (it only uses macOS's HTTPS).
+
+### App Review information
+
+| Field | Value |
+|---|---|
+| Sign-in required | Yes. Give a ContApp test account (user and password) whose company has the SPV pages; without a certificate it still shows the extension being detected and the login prompt |
+| Contact | Name, phone and `suport@contapp.ro` |
+| Attachment | A screen recording of the full flow in Safari with a real certificate (see the notes) |
+| Release | **Manually release this version** |
+
+Notes:
+
+```
+ContApp SPV is the Safari version of a companion extension for ContApp (https://contapp.ro), an online accounting application for Romanian businesses and accountants. The app itself only tells the user how to turn the extension on; the extension does the work inside Safari. It is meant to be distributed unlisted, from a link inside ContApp; we are requesting unlisted distribution.
+
+Using it end to end needs a Romanian qualified digital certificate with access to ANAF's SPV (Spațiul Privat Virtual) on a USB token, which a reviewer normally does not have. The attached recording shows the whole flow with a real certificate:
+1. In Safari, turn on ContApp SPV (Settings → Extensions) and allow it on webserviced.anaf.ro and the ContApp site.
+2. On ContApp's SPV certificate page the extension is detected (the content script marks the page).
+3. ContApp asks the extension for https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60. Safari does not attach the client certificate to requests from an extension's background, so the extension runs the request from an ANAF tab: when none is open it opens one in the background, and closes it a minute after the last request.
+4. The first time there is no ANAF session yet: ContApp shows "Autentificare ANAF", which opens the ANAF address in a tab, where macOS asks for the certificate and the token for its PIN.
+5. Back in ContApp, the request succeeds and the extension returns ANAF's JSON (or, for a document download, the PDF) to the ContApp page.
+
+Without a certificate you can still check, with the test account above: the extension is detected on the ContApp page, a sync request opens and closes the background ANAF tab and ends with ContApp asking for the ANAF login, and the extension refuses any address outside https://webserviced.anaf.ro/SPVWS2/rest/. Permissions: the extension uses cookies (to clear a dead ANAF session before a new login), scripting (to run the SPV request in the ANAF tab) and alarms (to close that tab). The source is public: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension
+
+Contact: suport@contapp.ro
+```
+
+### Unlisted distribution request
+
+At <https://developer.apple.com/contact/request/unlisted-app/>, once the app exists in App Store Connect (its Apple ID
+is under App Information):
+
+```
+ContApp SPV is only useful to customers of ContApp (https://contapp.ro), an online accounting application for Romanian businesses and accountants: it carries a Safari extension that lets ContApp read the ANAF SPV inbox with the user's own digital certificate. It does nothing without a ContApp account and a Romanian qualified certificate. Customers install it from a direct link shown inside ContApp, next to the Chrome, Edge and Firefox versions of the same extension, which are also distributed unlisted. Listing it publicly would only reach people who cannot use it.
+```
+
 ## Assets checklist
 
 - [x] Icon 128×128: `icons/icon-128.png`
@@ -229,3 +408,5 @@ Testing end to end needs a ContApp account and a Romanian qualified certificate 
   | `06-instalare.png` | Instalarea extensiei din ContApp. |
 
 - [x] Small promo tile 440×280 (PNG, RGB, no alpha): `store/promo-440x280.png`
+- [x] Mac app icon, every size: in the Xcode project, rendered by `safari/app-icon.swift`
+- [ ] Safari version of `06-instalare.png` for the Mac App Store (Safari → Settings → Extensions), 1280×800

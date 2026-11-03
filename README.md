@@ -26,7 +26,9 @@ See [PRIVACY.md](PRIVACY.md).
 | `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
-| `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`). |
+| `build.sh` | Writes `dist/chrome`, `dist/firefox` and `dist/safari`, and zips the first two (requires `jq` and `zip`). |
+| `safari/` | The Xcode project of the macOS app that carries the Safari extension, and `app-icon.swift`, which renders its icons. |
+| `safari.sh` | Generated that Xcode project once (requires Xcode); refuses to overwrite it. |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
 | `store/` | Store listing texts, the 512 px store icon and the screenshots. |
 | `PRIVACY.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` | Privacy policy (published by GitHub Pages), changelog, security policy, contribution rules, MIT licence. |
@@ -73,6 +75,69 @@ host permission at any time (*about:addons* → ContApp SPV → the permissions 
 `gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
 advisory warning about the Android minimum version, which is expected.
 
+### Safari (macOS)
+
+Safari only runs web extensions shipped inside a macOS app, so there is no zip to download. With the full Xcode
+installed (not only the command line tools):
+
+1. `./build.sh` writes `dist/safari`. The Xcode project in `safari/` wraps it (app *ContApp SPV*, bundle id
+   `ro.contapp.spv`, extension `ro.contapp.spv.Extension`; the ids cannot change once the app is on the App Store) and
+   references `dist/safari` rather than copying it, so after a source change `./build.sh` and a rebuild in Xcode are
+   enough. `safari.sh` generated the project once with Apple's converter and now refuses to run while it exists: the
+   project is edited since, and regenerating it would undo that (the app id the extension id has to start with, macOS
+   13, the team, the App Store settings below, the Romanian app window).
+2. Open `safari/ContApp SPV/ContApp SPV.xcodeproj`, pick the *ContApp SPV* scheme and **Run**; without an Apple team, set
+   signing to *Sign to Run Locally*. The app window has a button that opens Safari's extension settings.
+3. Only for a build signed to run locally: Safari → Settings → Advanced → *Show features for web developers*, then
+   Settings → Developer → *Allow unsigned extensions* (asked again after every Safari restart). A build signed with
+   the team needs neither.
+4. Safari → Settings → Extensions → enable **ContApp SPV**, and allow it on `webserviced.anaf.ro`, `anaf.ro` and the
+   ContApp hosts. Safari asks for every site, content-script hosts included: until the ContApp host is allowed, the
+   page sees no `data-spv-extension` and shows the install callout.
+
+For local development run `SAFARI_DEV=1 ./build.sh` and rebuild in Xcode:
+`dist/safari` then keeps the `contapp.test` hosts, which Safari needs because it has no load-unpacked. A plain
+`./build.sh` drops them again; never ship an app built from a development `dist/safari`. The project signs with the
+Apple Developer team `JGKF87DT24`.
+
+For the Mac App Store the app declares the *Productivity* category and no non-exempt encryption
+(`ITSAppUsesNonExemptEncryption = NO`, it only uses the system's HTTPS), and its version (`MARKETING_VERSION`, now
+`1.0.0`) should match the extension's; raise the build number (`CURRENT_PROJECT_VERSION`) on every upload. The app
+icon set is rendered from `icons/icon.svg` by `swift safari/app-icon.swift`. To upload: a plain `./build.sh` (never
+`SAFARI_DEV=1`), then in Xcode the *ContApp SPV* scheme, destination *Any Mac*, **Product → Archive**, and in the
+Organizer **Distribute App → App Store Connect**.
+
+The Safari manifest drops `minimum_chrome_version` and asks for Safari 18 (`browser_specific_settings.safari`). In
+Safari the cookie query sends only `domain`: Safari's cookies API takes neither `partitionKey` nor `firstPartyDomain`.
+The engine is told apart by the extension URL scheme (`safari-web-extension:`), since Safari defines `browser` like
+Firefox does.
+
+**In Safari the SPV requests run in the ANAF tab, not in the background.** A background `fetch` carries the ANAF
+session cookie but not the client certificate the session was opened with (Safari ties the certificate prompt to a
+tab), and F5 answers it with its logout page, `my.logout.php3?errorcode=19`, which ends the session. The same request
+sent from the SPV page in a tab gets the JSON. So in Safari the worker finds the most recently used tab under
+`https://webserviced.anaf.ro/SPVWS2/rest/`, runs the fetch there as the page's own script
+(`chrome.scripting.executeScript`, `world: "MAIN"`) and checks the answer like any other. The page-facing protocol
+is unchanged.
+
+When no such tab is open, the worker opens its own in the background (`listaMesaje?zile=1#contapp-spv`; the fragment
+marks it and never reaches ANAF). While the session lives, Safari loads it without asking for anything, so the user
+only sees a tab come and go in the tab bar. An alarm closes it after a minute without requests; the user's own SPV
+tabs are never closed. If that tab ends outside the SPV API (F5's pages) the request answers `session_lost`, and if
+it has not loaded within 30 s (a certificate prompt nobody sees) `certificate_required`; either way the tab is closed
+and the page offers `login`, which also closes the worker's own tab once the session is lost. The Safari build alone
+adds the `scripting` and `alarms` permissions.
+
+Tried on 2026-10-27, Safari on macOS 27 with a USB token, against a local ContApp: login, *Verifică* (CNP, certificate
+series, CUIs) and the inbox sync work through the tab. Still to check:
+
+- [ ] A large PDF (tens of MiB) gets through `executeScript`'s result; its size limit in Safari is unknown.
+- [ ] `login` answers `cleared` after a lost session (the extension does see the F5 cookies).
+- [ ] Safari 18 is the right floor (tried on Safari for macOS 27 only).
+
+Distribution needs an Apple Developer Program membership: either the Mac App Store (unlisted is possible) or a
+notarized Developer ID build of the app. Neither is set up, and the release workflow does not build Safari yet.
+
 Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
 service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
 `chrome.cookies` takes a `partitionKey`, which the login needs to clear partitioned ANAF cookies too.
@@ -100,8 +165,9 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
-  network-level failure while the browser is online (offline it is `network` with the message `offline`). The page
-  should offer the `login` action.
+  network-level failure while the browser is online (offline it is `network` with the message `offline`). In Safari it
+  also means the SPV tab the worker opened did not load within 30 s (see *Safari* above). The page should offer the
+  `login` action.
 - `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
   `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
   answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). No body is handed over. The page
@@ -201,17 +267,18 @@ way to reach SPV, so any change to the message shapes above must ship in both re
 Things that are *not* a problem: the login tab showing JSON, the PIN being asked only once per browser
 session, the service worker in `chrome://extensions` showing *inactive* between clicks.
 
-### Manual spike test (Chrome, USB token)
+### Manual spike test (USB token)
 
-1. Make sure the token middleware is installed and Chrome can see the certificate: opening
+The snippets use `.then` rather than top-level `await`, which Safari's console does not take.
+
+1. Make sure the token middleware is installed and the browser can see the certificate: opening
    `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60` directly in a tab should show the
    certificate picker and a PIN prompt.
-2. Quit and restart Chrome so no certificate choice is cached.
-3. Load the extension unpacked (above). Open any ContApp page and the DevTools console.
-4. Ping: run the example snippet above. Expect `{ok:true, version:"<version>", ...}`.
-5. Fetch before login, expect `certificate_required`:
+2. Quit and restart the browser so no certificate choice is cached.
+3. Load the extension (above). Open any ContApp page and its console (Safari: right-click → *Inspect Element*).
+4. Define the helper, then ping. Expect `{ok:true, version:"<version>", ...}`:
    ```js
-   const ask = (msg) => new Promise((resolve) => {
+   var ask = (msg) => new Promise((resolve) => {
        const id = crypto.randomUUID();
        window.addEventListener("message", function onReply(e) {
            if (e.source !== window || e.data?.channel !== "contapp-spv" || e.data.direction !== "reply" || e.data.id !== id) return;
@@ -220,18 +287,21 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
        });
        window.postMessage({ channel: "contapp-spv", id, ...msg }, location.origin);
    });
-   const url = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
-   await ask({ type: "fetch", url });
+   var url = "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60";
+   var show = (r) => console.log(JSON.stringify(r.ok ? { status: r.status, url: r.url, text: new TextDecoder().decode(r.body).slice(0, 300) } : r));
+   ask({ type: "ping" }).then(show);
    ```
-6. Login: `await ask({ type: "login", url })`. Expect `reset: "cleared"`: the fetch in step 5 found no session.
-   A tab opens; pick the certificate, enter the PIN, confirm JSON shows, then close the tab.
-7. Fetch again: `const r = await ask({ type: "fetch", url }); r.status; new TextDecoder().decode(r.body)`.
-   Expect status 200 and the messages JSON.
+5. Fetch before login, expect `certificate_required`: `ask({ type: "fetch", url }).then(show)`.
+6. Login: `ask({ type: "login", url }).then(show)`. Expect `reset: "cleared"`: the fetch in step 5 found no session.
+   A tab opens; pick the certificate, enter the PIN, confirm JSON shows, then close the tab. (In Safari the next
+   request opens an SPV tab of its own in the background and closes it a minute later.)
+7. Fetch again: `ask({ type: "fetch", url }).then(show)`. Expect status 200 and the messages JSON.
 8. Download one message: take an `id` from step 7 and run
-   `await ask({ type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=<id>" })`;
-   the body should start with `%PDF` (`new TextDecoder().decode(r.body.slice(0, 4))`).
-9. Forbidden URL: `await ask({ type: "fetch", url: "https://example.com/" })` → `forbidden_url`.
-10. Service worker logs: `chrome://extensions` → ContApp SPV → **service worker** link → console.
+   `ask({ type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=<id>" }).then(show)`;
+   the text should start with `%PDF`.
+9. Forbidden URL: `ask({ type: "fetch", url: "https://example.com/" }).then(show)` → `forbidden_url`.
+10. Extension logs: Chrome: `chrome://extensions` → ContApp SPV → **service worker** link → console. Safari: Develop →
+    *Web Extension Background Content* → ContApp SPV, with the console filter on *All* (the logs are `console.debug`).
 
 ### Spike findings
 

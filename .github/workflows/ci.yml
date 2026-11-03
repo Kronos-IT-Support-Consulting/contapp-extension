@@ -35,7 +35,7 @@ jobs:
 
       - name: Release manifests carry only production hosts
         run: |
-          for target in chrome firefox; do
+          for target in chrome firefox safari; do
             jq -e '[.content_scripts[].matches[] | select(test("\\.test/"))] | length == 0' "dist/$target/manifest.json"
           done
 

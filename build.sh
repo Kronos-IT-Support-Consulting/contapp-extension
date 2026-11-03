@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Writes dist/chrome and dist/firefox from the same sources and zips each one.
+# Writes dist/chrome, dist/firefox and dist/safari from the same sources and zips the first two.
 # Firefox MV3 wants background.scripts, and AMO rejects new add-ons without data_collection_permissions.
+# Safari only installs an extension wrapped in a macOS app, so dist/safari is the input of safari.sh, not a download.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 version=$(jq -r '.version' manifest.json)
 
 rm -rf dist
-for target in chrome firefox; do
+for target in chrome firefox safari; do
     mkdir -p "dist/$target/icons"
     cp background.js content.js "dist/$target/"
     # Only the PNGs the manifest references; the SVG sources stay in the repository.
@@ -24,6 +25,14 @@ firefox='.background = {scripts: ["background.js"]} | del(.minimum_chrome_versio
 
 jq "$production | del(.browser_specific_settings)" manifest.json > dist/chrome/manifest.json
 jq "$production | $firefox" manifest.json > dist/firefox/manifest.json
+# Safari has no load-unpacked: it always runs dist/safari, so SAFARI_DEV=1 keeps the contapp.test hosts there.
+# Never ship a Safari app built that way.
+safari_hosts=$production
+[ "${SAFARI_DEV:-}" = 1 ] && safari_hosts='.'
+# Safari runs each SPV request inside an ANAF tab (see fetchInAnafTab in background.js), which takes scripting, and
+# closes the tab it opened for that with an alarm.
+jq "$safari_hosts | del(.minimum_chrome_version) | .permissions += [\"scripting\", \"alarms\"] | .browser_specific_settings = {safari: {strict_min_version: \"18.0\"}}" \
+    manifest.json > dist/safari/manifest.json
 
 # Reproducible archives: the same commit gives byte-identical zips on any machine. Every entry gets the commit
 # time (SOURCE_DATE_EPOCH outside a git checkout, else 1980-01-02, the earliest safe zip date), fixed modes,

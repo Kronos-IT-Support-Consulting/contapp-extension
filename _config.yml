@@ -6,6 +6,8 @@ exclude:
   - content.js
   - manifest.json
   - build.sh
+  - safari.sh
+  - safari/
   - package.json
   - package-lock.json
   - test/
