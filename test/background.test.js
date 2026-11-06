@@ -151,7 +151,7 @@ function loadBackground(fetchImpl, {
         return { reply, close, disconnected: () => disconnected };
     };
     const send = (message, sender) => connect(message, sender).reply;
-    // Plays decl-login.js: a one-off runtime message from a tab, answered through sendResponse.
+    // Plays login-tab.js: a one-off runtime message from a tab, answered through sendResponse.
     const tell = (message, tabId, url, id = EXTENSION_ID) => {
         let response;
         onMessage(message, { id, url, tab: { id: tabId } }, (value) => (response = structuredClone(value)));
@@ -196,9 +196,13 @@ test("the hosts the worker fetches from are the ones the manifest asks permissio
     );
     assert.deepEqual(manifest.permissions, ["cookies"], "only cookies, to reset ANAF's session before the login tab");
     assert.deepEqual(
-        manifest.content_scripts.find(({ js }) => js.includes("decl-login.js")).matches,
-        ["https://decl.anaf.mfinante.gov.ro/my.policy*", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*"],
-        "the login helper runs only on the portal's F5 form and the pages behind it",
+        manifest.content_scripts.find(({ js }) => js.includes("login-tab.js")).matches,
+        [
+            "https://decl.anaf.mfinante.gov.ro/my.policy*",
+            "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*",
+            "https://webserviced.anaf.ro/SPVWS2/rest/*",
+        ],
+        "the login helper runs only on the portal's F5 form and the pages a login ends on",
     );
 });
 
@@ -924,19 +928,20 @@ test("login opens the declaration portal's root next to the ContApp tab, and ref
     const fromTab = { ...CONTAPP, tab: { id: 7 } };
     await send({ type: "login", url: DECL_HOME }, fromTab);
     await send({ type: "login", url: ANAF_URL }, fromTab);
-    assert.deepEqual(createdTabs.slice(-2), [{ url: DECL_HOME, openerTabId: 7 }, { url: ANAF_URL }], "only the portal's tab is ours to close");
+    assert.deepEqual(createdTabs.slice(-2), [{ url: DECL_HOME, openerTabId: 7 }, { url: ANAF_URL, openerTabId: 7 }]);
 });
 
 test("F5's form is submitted once, and only in a portal tab the login opened", async () => {
     const { send, tell } = loadBackground(unreachable);
-    const form = { type: "decl-login-form" };
+    const form = { type: "login-form" };
 
     await send({ type: "login", url: DECL_HOME }); // tab 101
-    await send({ type: "login", url: ANAF_URL }); // tab 102, SPV: not watched
+    await send({ type: "login", url: ANAF_URL }); // tab 102, SPV: no form to submit
 
     const refused = [
         ["a tab the user opened", form, 55, POLICY],
         ["the SPV login tab", form, 102, POLICY],
+        ["the SPV login tab on its F5 page", form, 102, "https://webserviced.anaf.ro/my.policy"],
         ["another extension", form, 101, POLICY, "other-extension"],
         ["not F5's form", form, 101, DECL_LANDING],
         ["the portal moved", form, 101, `${DECL_HOME}WAS7DUS/`],
@@ -953,7 +958,7 @@ test("F5's form is submitted once, and only in a portal tab the login opened", a
 
 test("the login tab closes once it reaches the portal, only if it is ours, and the session then counts as alive", async () => {
     const { send, tell, removedTabs } = loadBackground(unreachable);
-    const landed = { type: "decl-login-landed" };
+    const landed = { type: "login-landed" };
 
     await send({ type: "login", url: DECL_HOME }); // tab 101
 
@@ -968,24 +973,57 @@ test("the login tab closes once it reaches the portal, only if it is ours, and t
 
     tell(landed, 101, DECL_LANDING);
     assert.deepEqual(removedTabs, [101], "forgotten once closed");
-    assert.deepEqual(tell({ type: "decl-login-form" }, 101, POLICY), { submit: false });
+    assert.deepEqual(tell({ type: "login-form" }, 101, POLICY), { submit: false });
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
 });
 
+test("the SPV login tab closes once it lands on an SPV REST answer, only if it is ours, never on F5's pages", async () => {
+    const { send, tell, removedTabs } = loadBackground(respond(200, new TextEncoder().encode("<html>F5</html>")));
+    const landed = { type: "login-landed" };
+
+    // The last fetch found no SPV answer, so the session counts as lost.
+    await send({ type: "fetch", url: ANAF_URL });
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    await send({ type: "login", url: DECL_HOME }); // tab 102
+
+    const notClosed = [
+        ["a tab the user opened", 55, ANAF_URL],
+        ["another extension", 101, ANAF_URL, "other-extension"],
+        ["F5's login form", 101, "https://webserviced.anaf.ro/my.policy"],
+        ["F5's virtual desktop", 101, "https://webserviced.anaf.ro/vdesk/hangup.php3"],
+        ["F5's public files", 101, "https://webserviced.anaf.ro/public/include/js/session_check.js"],
+        ["outside the REST prefix", 101, "https://webserviced.anaf.ro/SPVWS2/other"],
+        ["over http", 101, "http://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60"],
+        ["the portal's landing, from the SPV tab", 101, DECL_LANDING],
+        ["an SPV answer, from the portal's tab", 102, ANAF_URL],
+    ];
+    for (const [name, tabId, url, id] of notClosed) {
+        tell(landed, tabId, url, id);
+        assert.deepEqual(removedTabs, [], name);
+    }
+
+    tell(landed, 101, `${ANAF_URL}&x=1`);
+    assert.deepEqual(removedTabs, [101]);
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, "the SPV session now counts as alive");
+});
+
 test("a login tab is watched, with the worker kept alive, until it closes or five minutes pass", async () => {
-    const { send, tell, closeTab, timers, deadlines } = loadBackground(unreachable);
-    const form = { type: "decl-login-form" };
+    const { send, tell, closeTab, timers, deadlines, removedTabs } = loadBackground(unreachable);
+    const form = { type: "login-form" };
 
     await send({ type: "login", url: DECL_HOME }); // tab 101
     await send({ type: "login", url: DECL_HOME }); // tab 102
-    assert.deepEqual(timers.map(({ ms, cleared }) => [ms, cleared]), [[25_000, false], [25_000, false]]);
+    await send({ type: "login", url: ANAF_URL }); // tab 103
+    assert.deepEqual(timers.map(({ ms, cleared }) => [ms, cleared]), [[25_000, false], [25_000, false], [25_000, false]]);
 
     closeTab(101);
     assert.deepEqual(tell(form, 101, POLICY), { submit: false });
 
-    deadlines.filter(({ ms }) => ms === 300_000).at(-1).callback();
+    deadlines.filter(({ ms }) => ms === 300_000).slice(-2).forEach(({ callback }) => callback());
     assert.deepEqual(tell(form, 102, POLICY), { submit: false });
-    assert.deepEqual(timers.map(({ cleared }) => cleared), [true, true]);
+    tell({ type: "login-landed" }, 103, ANAF_URL);
+    assert.deepEqual(removedTabs, [], "after five minutes the SPV tab is no longer ours to close");
+    assert.deepEqual(timers.map(({ cleared }) => cleared), [true, true, true]);
 });
 
 test("each site keeps its own session: a login clears only the cookies and requests of its own host", async () => {
