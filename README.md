@@ -26,7 +26,7 @@ See [PRIVACY.md](PRIVACY.md).
 | `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
-| `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`). |
+| `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`), plus the `-dev` builds that also run on the local `contapp.test` hosts. |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
 | `store/` | Store listing texts, the 512 px store icon and the screenshots. |
 | `PRIVACY.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` | Privacy policy (published by GitHub Pages), changelog, security policy, contribution rules, MIT licence. |
@@ -88,15 +88,27 @@ Content script ↔ service worker: one `chrome.runtime.connect` port per request
 opened by this extension's content script from a page on one of the hosts the manifest injects it into; closing
 the port (a `cancel`, or the tab navigating away or closing) aborts the request.
 
-Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fetch` and `login`.
+Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fetch`, only URLs under
+`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` for `upload`, and either of those or exactly
+`https://decl.anaf.mfinante.gov.ro/` (the declaration portal's start page) for `login`.
 
 | page sends | extension answers |
 |---|---|
 | `{type:"ping"}` | `{ok:true, version}` |
 | `{type:"fetch", url}` | `{ok:true, status, url, body}` with `body` an ArrayBuffer (structured clone) |
+| `{type:"upload", url, field, filename, contentType, body}` | the same as `fetch`: `{ok:true, status, url, body}` with ANAF's answer as an ArrayBuffer |
 | `{type:"login", url}` | `{ok:true, reset, message?}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
 | `{type:"cancel", id}` | nothing; the pending request with that `id` answers `{ok:false, error:"cancelled"}` |
 | any | `{ok:false, error:"certificate_required"\|"session_lost"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"forbidden_origin"\|"network"\|"extension"\|"extension_reloaded"\|"unknown_type", message?}` |
+
+`upload` POSTs a `multipart/form-data` body with one file part: `field` is the part's name (`linkdoc` for ANAF's
+`displayFile.do`), `filename` and `contentType` its file name and type, and `body` the file's bytes as a base64 string
+(it crosses `window.postMessage` and a runtime port). It answers with the same replies and errors as `fetch`, with the
+same credentials, redirects, deadlines, slots and cancelling. The portal answers an accepted declaration with an HTML
+page (`Succes depunere`, `Indexul este <b>…</b>`); the page reads the outcome from that body, the extension does not.
+Fields that are not strings, an empty `field`, or a `body` that is not base64 answer `network` with a `message` and
+send nothing. An upload is not idempotent: after `cancelled` or `timeout` ANAF may still have registered the
+declaration, so check before sending it again rather than retrying blindly.
 
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
@@ -104,19 +116,23 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
   should offer the `login` action.
 - `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
   `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
-  answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). No body is handed over. The page
-  should offer the `login` action.
+  answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). For `upload`, the request ended
+  outside `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` (F5's `/my.policy`, the portal's start page, `http://`); the
+  portal's own pages are HTML, so the body under the prefix is not checked. No body is handed over. The page should
+  offer the `login` action (for an upload, with the portal's URL).
 - `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
   prompt that never showed, or the body did not finish within 5 minutes of the headers. The request is aborted so it
   stops holding one of Chrome's six connections to the host. The page should offer the `login` action.
 - `cancelled`: a `login` reset the lost session while this fetch was in flight or queued, or the page sent `cancel`
   for it. After a login it is not a failure to show: run the request again once the user is back from the login tab.
-- `permission`: the extension has no access to `webserviced.anaf.ro` (revoked in Firefox, or Chrome's site access
-  set to "on click"); `message` names the missing grant. The page should ask the user to grant site access.
-- `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the SPV REST prefix
-  (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
+- `permission`: the extension has no access to `webserviced.anaf.ro`, or for `upload` to
+  `decl.anaf.mfinante.gov.ro` (revoked in Firefox, or Chrome's site access set to "on click"); `message` names the
+  missing grant. The page should ask the user to grant site access.
+- `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the prefix the type
+  accepts (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
-  response too large to hand over (above 47 MiB) and a login tab that could not be opened.
+  response or upload too large to hand over (above 47 MiB), an upload whose fields are unusable, and a login tab that
+  could not be opened.
 - `forbidden_origin`: the request came from a page the extension does not serve. ContApp never sees it in
   practice, since the content script only runs on those hosts.
 - `extension`: the content script got no usable answer from the service worker (a worker that died mid-request).
@@ -126,16 +142,19 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
   ContApp page helps, so say so instead of retrying.
 - `unknown_type`: the `type` is none of the above.
 
-At most four fetches use the network at once; the rest wait their turn. Chrome opens six connections per host,
-so two stay free for the login tab even when every fetch is stuck on a handshake.
+At most four requests per ANAF host use the network at once; the rest wait their turn. Chrome opens six connections
+per host, so two stay free for the login tab even when every request is stuck on a handshake. `webserviced.anaf.ro`
+and `decl.anaf.mfinante.gov.ro` have separate F5 gateways, so each keeps its own slots and session: a login resets
+and cancels only the host it opens.
 
-`reset` in the login reply says what happened to the ANAF session before the tab opened:
+`reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 
-- `kept`: the last fetch got a JSON or PDF answer from the SPV REST API, so the session is alive and is left alone (another
+- `kept`: the last request to that host got an answer (for SPV a JSON or PDF one from the REST API; for the portal
+  one under `/WAS6DUS/` below HTTP 400), so the session is alive and is left alone (another
   ContApp tab may be syncing with it).
 - `cleared`: the session was lost, or unknown after the service worker restarted. Every cookie the browser sends to
-  `webserviced.anaf.ro` was deleted, including those set on `.anaf.ro` and partitioned ones, and fetches still in
-  flight were cancelled so they stop holding connections. After a failed certificate or PIN check, ANAF's F5
+  the host was deleted (for `webserviced.anaf.ro` including those set on `.anaf.ro`; partitioned ones too), and
+  requests to it still in flight were cancelled so they stop holding connections. After a failed certificate or PIN check, ANAF's F5
   gateway keeps answering the stale cookie with its error page; this lets the login start over.
 - `failed`: the cookies could not be cleared, with `message` saying why (most often a revoked host permission).
   The tab still opens; if it lands on the gateway's error page, the user has to clear the ANAF cookies by hand.
@@ -267,6 +286,11 @@ To try changes, load the repository folder unpacked in Chrome (it is Chrome-shap
 local `contapp.test` hosts), or `dist/firefox` in Firefox after `./build.sh`. Reload the extension and the
 ContApp tab after each change. `build.sh` strips the `.test` hosts, so release builds only run on
 `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`.
+
+To test a build against a local ContApp without loading the source folder, use `dist/chrome-dev` or
+`dist/firefox-dev` (also zipped as `contapp-spv-{chrome,firefox}-dev-<version>.zip`, and attached to every CI run's
+artifact). They are the release code with the `.test` hosts kept, named "ContApp SPV (dev)" and, in Firefox, under
+their own id, so they install beside the store version. They are never published.
 
 `npm test` runs the unit tests. `npm run test:e2e` loads `dist/chrome` (build first) into Playwright's Chromium,
 with every request answered by test routes; `npx playwright install chromium` fetches the browser once. CI runs both.

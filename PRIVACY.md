@@ -1,6 +1,6 @@
 # Politica de confidențialitate — extensia ContApp SPV
 
-Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 16.10.2026 · [English version below](#privacy-policy--contapp-spv-extension)
+Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 06.11.2026 · [English version below](#privacy-policy--contapp-spv-extension)
 
 Această politică explică ce date prelucrează extensia de browser **ContApp SPV**, de ce, pe ce temei și ce drepturi
 aveți, conform art. 13 din Regulamentul (UE) 2016/679 (GDPR). Ea completează
@@ -20,16 +20,19 @@ Extensia este publicată de **Kronos IT Support & Consulting SRL**, operatorul p
 ## 2. Ce face extensia
 
 Extensia permite aplicației ContApp să citească mesajele din Spațiul Privat Virtual (SPV) al ANAF, să descarce
-documentele din ele și să trimită cereri de documente, folosind certificatul digital calificat din browserul
-dumneavoastră (token USB sau certificat în cloud). Acest lucru este necesar pentru că serviciul SPV al ANAF acceptă
-numai conexiuni autentificate cu certificat, iar o pagină web nu poate citi singură răspunsul.
+documentele din ele, să trimită cereri de documente și să depună la ANAF declarațiile pe care le-ați ales,
+folosind certificatul digital calificat din browserul dumneavoastră (token USB sau certificat în cloud). Acest lucru
+este necesar pentru că serviciul SPV și portalul de depunere a declarațiilor ale ANAF acceptă numai conexiuni
+autentificate cu certificat, iar o pagină web nu poate citi singură răspunsul.
 
 Extensia acționează numai când o pagină ContApp deschisă de dumneavoastră îi cere:
 
 1. pagina ContApp cere o adresă din serviciul ANAF `https://webserviced.anaf.ro/SPVWS2/rest/` (lista mesajelor,
-   descărcarea unui mesaj, o cerere de document);
+   descărcarea unui mesaj, o cerere de document) sau, când depuneți o declarație, îi dă extensiei fișierul PDF semnat
+   al declarației, pe care extensia îl trimite la `https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do`;
 2. extensia trimite cererea către ANAF, iar browserul și sistemul de operare fac autentificarea cu certificatul;
-3. extensia întoarce răspunsul ANAF (date JSON sau un fișier PDF), neschimbat, paginii ContApp care l-a cerut.
+3. extensia întoarce răspunsul ANAF (date JSON, un fișier PDF sau, la depunere, pagina HTML de confirmare a
+   portalului, cu indexul de înregistrare), neschimbat, paginii ContApp care l-a cerut.
 
 Extensia refuză orice altă adresă. Nu face nimic din proprie inițiativă: componenta ei de fundal rulează numai cât
 timp răspunde unei cereri a paginii ContApp, nu verifică singură SPV, nu are pagină de setări și nu ia decizii
@@ -41,6 +44,7 @@ automate.
 |---|---|---|
 | Răspunsurile SPV: lista mesajelor (id, tip, dată, CIF, detalii, CNP-ul titularului certificatului, seria certificatului, CUI-urile la care are acces) și documentele descărcate, care pot conține date personale și fiscale | Afișarea și păstrarea mesajelor și documentelor SPV în contul dumneavoastră ContApp, la cererea dumneavoastră | Executarea contractului de utilizare a platformei ContApp (art. 6 alin. (1) lit. b) GDPR) |
 | Parametrii cererilor de documente (tip, CUI, an, lună, motiv) | Transmiterea către ANAF a cererii completate în ContApp | Executarea contractului (art. 6 alin. (1) lit. b) GDPR) |
+| Declarația depusă: fișierul PDF semnat pe care ați ales să îl depuneți, cu datele fiscale și personale din el (de exemplu CUI, CNP, nume, adresă, sume declarate), și răspunsul portalului ANAF (confirmarea depunerii și indexul de înregistrare) | Depunerea la ANAF a declarației întocmite în ContApp și păstrarea confirmării în contul dumneavoastră ContApp, la cererea dumneavoastră | Executarea contractului (art. 6 alin. (1) lit. b) GDPR) |
 
 **Ce nu prelucrează extensia:**
 
@@ -49,15 +53,16 @@ automate.
   la cheia privată.
 - **Cookie-uri.** Extensia nu folosește, nu salvează și nu transmite valorile cookie-urilor și nu setează cookie-uri.
   Cererile pe care le trimite către ANAF includ cookie-urile pe care browserul le are deja pentru
-  `webserviced.anaf.ro` (cookie-ul de sesiune setat de ANAF după autentificare), la fel ca orice cerere făcută din
-  browser. Când apăsați „Autentificare ANAF” și sesiunea ANAF nu mai funcționează, extensia șterge cookie-urile pe
-  care browserul le trimite către `webserviced.anaf.ro` (inclusiv cele setate pentru `anaf.ro`), ca autentificarea
-  să înceapă o sesiune nouă în locul uneia eșuate. Pentru asta browserul îi listează cookie-urile ANAF; extensia
-  le folosește doar ca să le șteargă. Alte site-uri nu sunt atinse.
+  `webserviced.anaf.ro` sau `decl.anaf.mfinante.gov.ro` (cookie-ul de sesiune setat de ANAF după autentificare), la
+  fel ca orice cerere făcută din browser. Când apăsați „Autentificare ANAF” și sesiunea ANAF a acelui server nu mai
+  funcționează, extensia șterge cookie-urile pe care browserul le trimite către serverul respectiv (pentru
+  `webserviced.anaf.ro` inclusiv cele setate pentru `anaf.ro`), ca autentificarea să înceapă o sesiune nouă în locul
+  uneia eșuate; sesiunea celuilalt server nu este atinsă. Pentru asta browserul îi listează cookie-urile ANAF;
+  extensia le folosește doar ca să le șteargă. Alte site-uri nu sunt atinse.
 - **Istoric de navigare, conținutul altor site-uri, date de utilizare.** Extensia nu le accesează.
 
 Pentru datele contului dumneavoastră ContApp, Kronos IT Support & Consulting SRL este operator. Pentru datele din
-documentele SPV ale firmelor pe care le administrați, Kronos IT Support & Consulting SRL (ContApp) acționează ca
+documentele SPV și din declarațiile firmelor pe care le administrați, Kronos IT Support & Consulting SRL (ContApp) acționează ca
 persoană împuternicită, în numele dumneavoastră, conform capitolului XXII din
 [Termenii și condițiile](https://contapp.ro/termeni-si-conditii/).
 
@@ -66,8 +71,9 @@ disponibilă, dar restul platformei ContApp funcționează.
 
 ## 4. Destinatari
 
-- **ANAF.** Cererile pleacă direct din browserul dumneavoastră către serverul SPV al ANAF, ca atunci când intrați în
-  SPV din browser.
+- **ANAF.** Cererile pleacă direct din browserul dumneavoastră către serverul SPV al ANAF sau, pentru depunerea
+  declarațiilor, către portalul `decl.anaf.mfinante.gov.ro`, ca atunci când intrați în SPV sau depuneți o declarație
+  din browser.
 - **ContApp.** Pagina ContApp care primește răspunsul îl trimite serverelor ContApp, în contul în care sunteți
   autentificat. De acolo datele sunt prelucrate de Kronos IT Support & Consulting SRL și de furnizorii săi
   (persoane împuternicite) enumerați în
@@ -90,8 +96,8 @@ contractuale standard) sunt descrise în
 
 ## 6. Cât timp păstrăm datele
 
-- **Extensia:** nu păstrează nimic. Răspunsurile ANAF stau în memoria browserului doar cât durează transferul către
-  pagina ContApp. Extensia nu are permisiunea `storage`.
+- **Extensia:** nu păstrează nimic. Declarația trimisă și răspunsurile ANAF stau în memoria browserului doar cât
+  durează transferul către ANAF, respectiv către pagina ContApp. Extensia nu are permisiunea `storage`.
 - **ContApp:** mesajele și documentele sincronizate rămân în contul dumneavoastră până le ștergeți sau până la
   închiderea contului, apoi conform perioadelor din
   [Politica de confidențialitate ContApp](https://contapp.ro/politica-de-confidentialitate/), secțiunea
@@ -100,10 +106,11 @@ contractuale standard) sunt descrise în
 ## 7. Securitate
 
 Extensia face cereri numai prin HTTPS, iar conexiunea cu ANAF este autentificată cu certificatul dumneavoastră
-calificat. Dacă ANAF redirecționează o cerere în afara serviciului SPV (de exemplu către o adresă HTTP), extensia nu
-citește răspunsul și nu îl transmite paginii. Extensia acceptă cereri numai de la paginile aplicațiilor ContApp
-(`account`, `contabilitate` și `declaratiaunica`.contapp.ro) și numai pentru adrese din
-serviciul SPV al ANAF. Răspunsurile ajung la pagina ContApp care le-a cerut, unde le pot vedea și scripturile
+calificat. Dacă ANAF redirecționează o cerere în afara serviciului SPV sau, la depunere, în afara
+`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` (de exemplu către pagina de autentificare sau către o adresă HTTP),
+extensia nu citește răspunsul și nu îl transmite paginii. Extensia acceptă cereri numai de la paginile aplicațiilor
+ContApp (`account`, `contabilitate` și `declaratiaunica`.contapp.ro) și numai pentru adrese din serviciul SPV al ANAF
+și, pentru depunere, din `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`. Răspunsurile ajung la pagina ContApp care le-a cerut, unde le pot vedea și scripturile
 încărcate de acea pagină; ContApp răspunde pentru scripturile pe care le include. Codul sursă
 este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension).
 
@@ -113,10 +120,12 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](
 |---|---|
 | Acces la `*://webserviced.anaf.ro/*` | Citește răspunsurile serviciului SPV al ANAF, pe care paginile web nu le pot citi direct. Extensia acceptă doar adrese care încep cu `https://webserviced.anaf.ro/SPVWS2/rest/`. Accesul cuprinde și `http://` numai pentru că altfel browserul nu îi arată extensiei cookie-urile ANAF fără atributul Secure; extensia nu face nicio cerere prin HTTP. |
 | Acces la `*://anaf.ro/*` | Folosit numai pentru cookie-uri: browserul îi arată extensiei și o lasă să șteargă un cookie setat pentru `.anaf.ro` (pe care îl trimite și către `webserviced.anaf.ro`) doar dacă are acces la `anaf.ro`. Extensia nu face nicio cerere către `anaf.ro`. |
+| Acces la `*://decl.anaf.mfinante.gov.ro/*` | Trimite la portalul de depunere a declarațiilor al ANAF declarația PDF pe care ați ales să o depuneți și citește răspunsul portalului, pe care paginile web nu îl pot citi direct. Extensia trimite fișiere (POST) numai la adrese care încep cu `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` și deschide fila de autentificare numai pe pagina de start a portalului, `https://decl.anaf.mfinante.gov.ro/`. Accesul cuprinde și `http://` numai pentru că altfel browserul nu îi arată extensiei cookie-urile portalului fără atributul Secure; extensia nu face nicio cerere prin HTTP. |
 | Script de conținut pe `https://{account,contabilitate,declaratiaunica}.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
-| Cookie-uri (`cookies`) | Șterge cookie-urile pe care browserul le trimite către `webserviced.anaf.ro` înainte de deschiderea filei de autentificare ANAF, când sesiunea ANAF nu mai funcționează, ca o sesiune eșuată să nu blocheze o nouă autentificare. Nu folosește, nu salvează și nu transmite valorile cookie-urilor și nu atinge alte site-uri. |
+| Cookie-uri (`cookies`) | Șterge cookie-urile pe care browserul le trimite către `webserviced.anaf.ro` sau `decl.anaf.mfinante.gov.ro` înainte de deschiderea filei de autentificare ANAF pentru acel server, când sesiunea lui nu mai funcționează, ca o sesiune eșuată să nu blocheze o nouă autentificare. Nu folosește, nu salvează și nu transmite valorile cookie-urilor și nu atinge alte site-uri. |
 
-Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa SPV, ca browserul să poată afișa alegerea
+Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa SPV sau pe pagina de start a portalului de
+declarații, ca browserul să poată afișa alegerea
 certificatului și cererea de PIN; deschiderea filei nu necesită nicio permisiune, iar extensia nu citește filele
 deschise.
 
@@ -153,7 +162,7 @@ nouă a extensiei ar prelucra date în alt mod, actualizăm politica înainte de
 
 # Privacy policy — ContApp SPV extension
 
-Effective date: 14 October 2026 · Last updated: 16 October 2026
+Effective date: 14 October 2026 · Last updated: 6 November 2026
 
 This policy explains what data the **ContApp SPV** browser extension processes, why, on what legal basis and what
 rights you have, under Article 13 of Regulation (EU) 2016/679 (GDPR). It supplements the
@@ -173,17 +182,20 @@ The extension is published by **Kronos IT Support & Consulting SRL**, the operat
 ## 2. What the extension does
 
 The extension lets the ContApp application read messages from ANAF's Virtual Private Space (SPV, the Romanian tax
-authority's portal), download the documents in them and send document requests, using the qualified digital
-certificate in your browser (USB token or cloud certificate). This is needed because ANAF's SPV service only accepts
-certificate-authenticated connections, and a web page cannot read the response on its own.
+authority's portal), download the documents in them, send document requests and file with ANAF the declarations you
+chose to file, using the qualified digital certificate in your browser (USB token or cloud certificate). This is
+needed because ANAF's SPV service and declaration filing portal only accept certificate-authenticated connections, and
+a web page cannot read the response on its own.
 
 It only acts when a ContApp page you opened asks it to:
 
 1. the ContApp page asks for an address under ANAF's `https://webserviced.anaf.ro/SPVWS2/rest/` service (message
-   list, message download, document request);
+   list, message download, document request) or, when you file a declaration, hands the extension the declaration's
+   signed PDF file, which the extension sends to `https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do`;
 2. the extension sends the request to ANAF, and the browser and operating system perform the certificate
    authentication;
-3. the extension returns ANAF's response (JSON data or a PDF file), unchanged, to the ContApp page that asked for it.
+3. the extension returns ANAF's response (JSON data, a PDF file or, for a filing, the portal's HTML confirmation page
+   with the registration index), unchanged, to the ContApp page that asked for it.
 
 The extension refuses any other address. It does nothing on its own initiative: its background component runs only
 while answering a request from a ContApp page; it does not check SPV on its own, has no settings page and makes no
@@ -195,6 +207,7 @@ automated decisions.
 |---|---|---|
 | SPV responses: the message list (id, type, date, tax ID (CIF), details, the certificate holder's personal identification number (CNP), the certificate serial number, the tax IDs (CUI) it can access) and downloaded documents, which can contain personal and tax data | Showing and keeping your SPV messages and documents in your ContApp account, at your request | Performance of the ContApp platform contract (Art. 6(1)(b) GDPR) |
 | Document request parameters (type, tax ID, year, month, reason) | Sending the request you filled in on ContApp to ANAF | Performance of the contract (Art. 6(1)(b) GDPR) |
+| The filed declaration: the signed PDF file you chose to file, with the tax and personal data it contains (for example tax ID, personal identification number (CNP), name, address, declared amounts), and the ANAF portal's answer (the filing confirmation and registration index) | Filing with ANAF the declaration prepared in ContApp and keeping the confirmation in your ContApp account, at your request | Performance of the contract (Art. 6(1)(b) GDPR) |
 
 **What the extension does not process:**
 
@@ -202,15 +215,16 @@ automated decisions.
   system and the token or cloud-signature software. The extension never sees the PIN and has no access to the
   private key.
 - **Cookies.** The extension does not use, store or transmit cookie values, and sets no cookies. The requests it
-  sends to ANAF carry the cookies the browser already holds for `webserviced.anaf.ro` (the session cookie ANAF sets
-  after authentication), like any request made from the browser. When you click "Autentificare ANAF" and the ANAF
-  session no longer works, the extension deletes the cookies the browser sends to `webserviced.anaf.ro` (including
-  those set for `anaf.ro`), so the login starts a new session instead of reusing a failed one. To do that the
+  sends to ANAF carry the cookies the browser already holds for `webserviced.anaf.ro` or `decl.anaf.mfinante.gov.ro`
+  (the session cookie ANAF sets after authentication), like any request made from the browser. When you click
+  "Autentificare ANAF" and that server's ANAF session no longer works, the extension deletes the cookies the browser
+  sends to that server (for `webserviced.anaf.ro` including those set for `anaf.ro`), so the login starts a new
+  session instead of reusing a failed one; the other server's session is left alone. To do that the
   browser lists the ANAF cookies to the extension, which uses them only to delete them. No other site is touched.
 - **Browsing history, other sites' content, usage data.** The extension does not access them.
 
 For your ContApp account data, Kronos IT Support & Consulting SRL is the controller. For the data in the SPV
-documents of the companies you manage, Kronos IT Support & Consulting SRL (ContApp) acts as a processor on your behalf,
+documents and declarations of the companies you manage, Kronos IT Support & Consulting SRL (ContApp) acts as a processor on your behalf,
 under chapter XXII of the [terms and conditions](https://contapp.ro/termeni-si-conditii/).
 
 Using the extension is optional. Without it, syncing SPV messages through the certificate in your browser is not
@@ -218,7 +232,8 @@ available, but the rest of the ContApp platform works.
 
 ## 4. Recipients
 
-- **ANAF.** Requests go directly from your browser to ANAF's SPV server, as when you open SPV in your browser.
+- **ANAF.** Requests go directly from your browser to ANAF's SPV server or, for filing declarations, to the
+  `decl.anaf.mfinante.gov.ro` portal, as when you open SPV or file a declaration in your browser.
 - **ContApp.** The ContApp page that receives the response sends it to ContApp's servers, under the account you are
   signed in to. From there the data is processed by Kronos IT Support & Consulting SRL and its processors listed in
   the [ContApp privacy policy](https://contapp.ro/politica-de-confidentialitate/), section "Cu cine partajăm datele?".
@@ -238,8 +253,8 @@ are described in the [ContApp privacy policy](https://contapp.ro/politica-de-con
 
 ## 6. How long data is kept
 
-- **The extension:** keeps nothing. ANAF's responses stay in browser memory only while being handed to the ContApp
-  page. The extension has no `storage` permission.
+- **The extension:** keeps nothing. A filed declaration and ANAF's responses stay in browser memory only while being
+  sent to ANAF or handed to the ContApp page. The extension has no `storage` permission.
 - **ContApp:** synced messages and documents stay in your account until you delete them or close the account, then
   for the periods in the [ContApp privacy policy](https://contapp.ro/politica-de-confidentialitate/), section
   "Perioada de stocare", or those required by law.
@@ -247,10 +262,11 @@ are described in the [ContApp privacy policy](https://contapp.ro/politica-de-con
 ## 7. Security
 
 The extension only makes HTTPS requests, and the connection to ANAF is authenticated with your qualified
-certificate. If ANAF redirects a request outside the SPV service (to an HTTP address, for example), the extension
-neither reads the response nor passes it to the page. The extension only accepts requests from the ContApp
-application pages (`account`, `contabilitate` and `declaratiaunica`.contapp.ro) and only for
-addresses in ANAF's SPV service. Answers go to the ContApp page that asked, where scripts that page loads can see
+certificate. If ANAF redirects a request outside the SPV service or, for a filing, outside
+`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` (to the login page or an HTTP address, for example), the extension neither
+reads the response nor passes it to the page. The extension only accepts requests from the ContApp application pages
+(`account`, `contabilitate` and `declaratiaunica`.contapp.ro) and only for addresses in ANAF's SPV service and, for
+filings, under `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`. Answers go to the ContApp page that asked, where scripts that page loads can see
 them too; ContApp is responsible for the scripts it includes. The source code is public at
 [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension).
 
@@ -260,10 +276,12 @@ them too; ContApp is responsible for the scripts it includes. The source code is
 |---|---|
 | Host access to `*://webserviced.anaf.ro/*` | Reads responses from ANAF's SPV service, which web pages cannot read directly. The extension only accepts addresses starting with `https://webserviced.anaf.ro/SPVWS2/rest/`. The access covers `http://` only because the browser otherwise hides ANAF cookies without the Secure attribute from the extension; it makes no HTTP requests. |
 | Host access to `*://anaf.ro/*` | Used only for cookies: the browser lists a cookie set on `.anaf.ro` (which it also sends to `webserviced.anaf.ro`) to the extension, and lets it delete one, only with access to `anaf.ro`. The extension makes no requests to `anaf.ro`. |
+| Host access to `*://decl.anaf.mfinante.gov.ro/*` | Sends the PDF declaration you chose to file to ANAF's declaration filing portal and reads the portal's answer, which web pages cannot read directly. The extension only sends files (POST) to addresses starting with `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` and only opens the login tab on the portal's start page, `https://decl.anaf.mfinante.gov.ro/`. The access covers `http://` only because the browser otherwise hides the portal's cookies without the Secure attribute from the extension; it makes no HTTP requests. |
 | Content script on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
-| Cookies (`cookies`) | Deletes the cookies the browser sends to `webserviced.anaf.ro` before the ANAF login tab opens, when the ANAF session no longer works, so a failed session cannot block a new login. It does not use, store or transmit cookie values and touches no other site. |
+| Cookies (`cookies`) | Deletes the cookies the browser sends to `webserviced.anaf.ro` or `decl.anaf.mfinante.gov.ro` before the ANAF login tab for that server opens, when its session no longer works, so a failed session cannot block a new login. It does not use, store or transmit cookie values and touches no other site. |
 
-To authenticate at ANAF, the extension opens a new tab on the SPV address so the browser can show the certificate
+To authenticate at ANAF, the extension opens a new tab on the SPV address or the declaration portal's start page so
+the browser can show the certificate
 picker and the PIN prompt; opening the tab needs no permission, and the extension does not read open tabs.
 
 ## 9. Your rights

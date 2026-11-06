@@ -1,10 +1,26 @@
-const ANAF_HOST = "webserviced.anaf.ro";
-const ANAF_DOMAIN = "anaf.ro";
-const ALLOWED_PREFIX = `https://${ANAF_HOST}/SPVWS2/rest/`;
-const HOST_PERMISSION = { origins: [`https://${ANAF_HOST}/*`] };
-// Chrome only lists or removes a cookie when the extension has access to the cookie's domain, over http:// for one
-// without the Secure flag; a cookie set on .anaf.ro needs access to anaf.ro itself.
-const COOKIE_PERMISSION = { origins: [`*://${ANAF_HOST}/*`, `*://${ANAF_DOMAIN}/*`] };
+// Each ANAF host sits behind its own F5 gateway, so each has its own session, cookie reset and connection slots.
+// `api` is where requests may go and where an answer must land to count as a live session.
+const SPV = site({
+    host: "webserviced.anaf.ro",
+    api: "https://webserviced.anaf.ro/SPVWS2/rest/",
+    cookieDomain: "anaf.ro",
+    // Chrome only lists or removes a cookie when the extension has access to the cookie's domain, over http:// for
+    // one without the Secure flag; a cookie set on .anaf.ro needs access to anaf.ro itself.
+    cookieOrigins: ["*://webserviced.anaf.ro/*", "*://anaf.ro/*"],
+    // The SPV REST API answers JSON or a PDF; an HTML page under the prefix is the gateway's.
+    isAnswer: isRestAnswer,
+});
+// The declaration portal: uploads go to /WAS6DUS/, the login starts at the root, which F5 sends through /my.policy.
+const DECL = site({
+    host: "decl.anaf.mfinante.gov.ro",
+    api: "https://decl.anaf.mfinante.gov.ro/WAS6DUS/",
+    home: "https://decl.anaf.mfinante.gov.ro/",
+    cookieDomain: "decl.anaf.mfinante.gov.ro",
+    cookieOrigins: ["*://decl.anaf.mfinante.gov.ro/*"],
+    // The portal answers an upload with its own HTML page; only the final URL tells it from the gateway's.
+    isAnswer: () => true,
+});
+const SITES = [SPV, DECL];
 const CHUNK_SIZE = 0x8000;
 // Chrome refuses runtime messages over 64 MiB; base64 adds a third, the reply envelope a few bytes.
 const MAX_BODY_BYTES = 47 * 1024 * 1024;
@@ -24,9 +40,25 @@ const PORT_NAME = "contapp-spv";
 // background fetches are stuck on a handshake; the rest wait for a slot.
 const MAX_CONCURRENT_FETCHES = 4;
 
-// The normalised href when the URL is under the SPV REST API, otherwise null. Normalising first means
-// the check runs on what fetch would actually request: "rest/../admin" resolves out of the prefix.
-function allowedUrl(url) {
+// `running` counts the slots in use, `waiting` queues the rest; `inFlight` holds every pending request, holding a
+// slot or waiting for one, so a login can cancel them. `sessionAlive` says whether the last completed request got
+// an answer from the site, unknown after the worker restarts, which counts as lost. `sessionReset` settles once the
+// login's cookie reset is done; a request started earlier would go out with the dead session.
+function site(config) {
+    return {
+        ...config,
+        permission: { origins: [`https://${config.host}/*`] },
+        inFlight: new Set(),
+        waiting: [],
+        running: 0,
+        sessionAlive: false,
+        sessionReset: Promise.resolve(),
+    };
+}
+
+// The normalised href when the URL is under `prefix`, otherwise null. Normalising first means the check runs on
+// what fetch would actually request: "rest/../admin" resolves out of the prefix.
+function allowedUrl(url, prefix) {
     if (typeof url !== "string") {
         return null;
     }
@@ -39,7 +71,15 @@ function allowedUrl(url) {
         return null; // not a URL at all
     }
 
-    return href.startsWith(ALLOWED_PREFIX) ? href : null;
+    return href.startsWith(prefix) ? href : null;
+}
+
+// The site and normalised href a login may open: anywhere under a site's API, or the declaration portal's root.
+function loginTarget(url) {
+    const href = allowedUrl(url, "https://");
+    const target = href && SITES.find(({ api, home }) => href.startsWith(api) || href === home);
+
+    return target ? { target, href } : null;
 }
 
 function toBase64(buffer) {
@@ -53,12 +93,23 @@ function toBase64(buffer) {
     return btoa(binary);
 }
 
+function fromBase64(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    return bytes;
+}
+
 function networkError(reason) {
     return { ok: false, error: "network", message: String(reason?.message ?? reason) };
 }
 
-// The SPV REST API answers JSON or a PDF. An HTML page served under the prefix is the F5 gateway's, not a live
-// session. TextDecoder drops a UTF-8 byte order mark; the prefix is long enough for leading whitespace.
+// An HTML page served under the SPV prefix is the F5 gateway's, not a live session. TextDecoder drops a UTF-8 byte
+// order mark; the prefix is long enough for leading whitespace.
 function isRestAnswer(buffer) {
     const head = new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 1024))).trimStart();
 
@@ -95,25 +146,17 @@ function keepAlive() {
     return () => clearInterval(timer);
 }
 
-// Every pending fetch, holding a slot or waiting for one, so a login can cancel them; `running` counts the slots
-// in use, `waiting` queues the rest.
-const inFlight = new Set();
-const waiting = [];
-let running = 0;
-// Whether the last completed fetch got an SPV answer; unknown after the worker restarts, which counts as lost.
-let sessionAlive = false;
-// Settles once the login's cookie reset is done; a fetch started earlier would go out with the dead session.
-let sessionReset = Promise.resolve();
-
 // A freed slot passes straight to the next waiter without dropping `running`, so a newcomer cannot take it too.
 // Rejects with the abort reason when the fetch is cancelled first, leaving the slot to the others.
-function acquireSlot(signal) {
+function acquireSlot(target, signal) {
+    const { waiting } = target;
+
     if (signal.aborted) {
         return Promise.reject(signal.reason);
     }
 
-    if (running < MAX_CONCURRENT_FETCHES) {
-        running++;
+    if (target.running < MAX_CONCURRENT_FETCHES) {
+        target.running++;
 
         return Promise.resolve();
     }
@@ -133,21 +176,21 @@ function acquireSlot(signal) {
     });
 }
 
-function releaseSlot() {
-    const next = waiting.shift();
+function releaseSlot(target) {
+    const next = target.waiting.shift();
 
     if (next) {
         next();
     } else {
-        running--;
+        target.running--;
     }
 }
 
-async function fetchBody(url, signal, onHeaders) {
+async function fetchBody(target, url, init, signal, onHeaders) {
     let response;
 
     try {
-        response = await fetch(url, { credentials: "include", redirect: "follow", cache: "no-store", signal });
+        response = await fetch(url, { ...init, credentials: "include", redirect: "follow", cache: "no-store", signal });
         onHeaders();
     } catch (error) {
         // An abort is a DOMException, so it lands here; proxyFetch tells the page why from signal.reason.
@@ -162,9 +205,9 @@ async function fetchBody(url, signal, onHeaders) {
         return networkError(error);
     }
 
-    // A lost session redirects to F5's login pages. Whatever ends up outside the SPV REST API, plain http:// included,
+    // A lost session redirects to F5's login pages. Whatever ends up outside the site's API, plain http:// included,
     // is not read, let alone handed to the page.
-    if (!allowedUrl(response.url)) {
+    if (!allowedUrl(response.url, target.api)) {
         response.body?.cancel().catch(() => {});
 
         return { ok: false, error: SESSION_LOST };
@@ -178,7 +221,7 @@ async function fetchBody(url, signal, onHeaders) {
         }
 
         // The gateway can also answer under the prefix, with its own HTML page.
-        if (response.status < 400 && !isRestAnswer(buffer)) {
+        if (response.status < 400 && !target.isAnswer(buffer)) {
             return { ok: false, error: SESSION_LOST };
         }
 
@@ -190,25 +233,26 @@ async function fetchBody(url, signal, onHeaders) {
     }
 }
 
-// `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every fetch.
-async function proxyFetch(url, controller) {
+// `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every request
+// to the same site. `init` adds the method and body of an upload.
+async function proxyFetch(target, url, controller, init = {}) {
     // MV3 host permissions are optional in Firefox, and Chrome withholds them under "on click" site access.
     // Without the grant, fetch fails with the same TypeError as a missing certificate.
-    if (!(await chrome.permissions.contains(HOST_PERMISSION))) {
-        return { ok: false, error: "permission", message: `permission for ${HOST_PERMISSION.origins[0]} is not granted` };
+    if (!(await chrome.permissions.contains(target.permission))) {
+        return { ok: false, error: "permission", message: `permission for ${target.permission.origins[0]} is not granted` };
     }
 
     const stopKeepAlive = keepAlive();
     let deadline;
     let holdsSlot = false;
 
-    inFlight.add(controller);
+    target.inFlight.add(controller);
 
     try {
-        await sessionReset;
+        await target.sessionReset;
 
         try {
-            await acquireSlot(controller.signal);
+            await acquireSlot(target, controller.signal);
             holdsSlot = true;
         } catch {
             return { ok: false, error: CANCELLED }; // cancelled while it waited for a slot
@@ -217,7 +261,7 @@ async function proxyFetch(url, controller) {
         const abortAfter = (ms) => setTimeout(() => controller.abort(TIMED_OUT), ms);
         deadline = abortAfter(FETCH_TIMEOUT_MS);
 
-        const reply = await fetchBody(url, controller.signal, () => {
+        const reply = await fetchBody(target, url, init, controller.signal, () => {
             clearTimeout(deadline);
             deadline = abortAfter(BODY_TIMEOUT_MS);
         });
@@ -226,42 +270,81 @@ async function proxyFetch(url, controller) {
             return { ok: false, error: controller.signal.reason === TIMED_OUT ? TIMED_OUT : CANCELLED };
         }
 
-        // fetchBody only answers ok for a REST answer under the SPV prefix.
-        sessionAlive = reply.ok && reply.status < 400;
+        // fetchBody only answers ok for an answer under the site's API.
+        target.sessionAlive = reply.ok && reply.status < 400;
 
         return reply;
     } finally {
         clearTimeout(deadline);
-        inFlight.delete(controller);
+        target.inFlight.delete(controller);
         if (holdsSlot) {
-            releaseSlot();
+            releaseSlot(target);
         }
         stopKeepAlive();
     }
 }
 
+// A multipart/form-data body with the one file field the declaration portal reads. The bytes arrive as base64,
+// since they cross window.postMessage and a runtime port as a string.
+function multipart({ field, filename, contentType, body }) {
+    if (![field, filename, contentType, body].every((value) => typeof value === "string") || !field) {
+        throw new Error("upload needs field, filename, contentType and body as strings");
+    }
+
+    let bytes;
+
+    try {
+        bytes = fromBase64(body);
+    } catch {
+        throw new Error("upload body is not base64");
+    }
+
+    if (bytes.byteLength > MAX_BODY_BYTES) {
+        throw new Error(`upload of ${bytes.byteLength} bytes is too large`);
+    }
+
+    const form = new FormData();
+    form.append(field, new Blob([bytes], { type: contentType }), filename);
+
+    return form;
+}
+
+async function proxyUpload(url, message, controller) {
+    let body;
+
+    try {
+        body = multipart(message);
+    } catch (error) {
+        return networkError(error);
+    }
+
+    return proxyFetch(DECL, url, controller, { method: "POST", body });
+}
+
 // Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all.
-function cookieQuery() {
-    const query = { domain: ANAF_DOMAIN, partitionKey: {} };
+function cookieQuery(target) {
+    const query = { domain: target.cookieDomain, partitionKey: {} };
 
     return typeof browser === "undefined" ? query : { ...query, firstPartyDomain: null };
 }
 
 // The browser sends the host its own cookies and those set on a parent domain such as .anaf.ro.
-function reachesAnafHost({ domain, hostOnly }) {
+function reachesHost({ host }, { domain, hostOnly }) {
     const bare = domain.replace(/^\./, "");
 
-    return hostOnly ? bare === ANAF_HOST : ANAF_HOST === bare || ANAF_HOST.endsWith(`.${bare}`);
+    return hostOnly ? bare === host : host === bare || host.endsWith(`.${bare}`);
 }
 
 // After a failed certificate or PIN check ANAF's F5 gateway keeps answering the dead session's cookie with its
 // error page, so the login tab starts from no cookie at all. The values are only passed back to remove.
-async function forgetAnafSession() {
-    if (!(await chrome.permissions.contains(COOKIE_PERMISSION))) {
-        throw new Error(`permission for ${COOKIE_PERMISSION.origins.join(" and ")} is not granted`);
+async function forgetSession(target) {
+    const permission = { origins: target.cookieOrigins };
+
+    if (!(await chrome.permissions.contains(permission))) {
+        throw new Error(`permission for ${permission.origins.join(" and ")} is not granted`);
     }
 
-    const cookies = (await chrome.cookies.getAll(cookieQuery())).filter(reachesAnafHost);
+    const cookies = (await chrome.cookies.getAll(cookieQuery(target))).filter((cookie) => reachesHost(target, cookie));
 
     await Promise.all(cookies.map(({ name, domain, path, storeId, partitionKey, firstPartyDomain }) =>
         chrome.cookies.remove({
@@ -273,20 +356,20 @@ async function forgetAnafSession() {
         })));
 }
 
-// A live session is kept: another ContApp tab may be syncing with it. A lost one is cleared, and the fetches still
-// stuck on it or queued behind them are cancelled so they stop holding connections the login tab needs. Fetches
-// that arrive during the reset wait for it.
-async function resetLostSession() {
-    if (sessionAlive) {
+// A live session is kept: another ContApp tab may be using it. A lost one is cleared, and the requests to the same
+// site still stuck on it or queued behind them are cancelled so they stop holding connections the login tab needs.
+// Requests that arrive during the reset wait for it.
+async function resetLostSession(target) {
+    if (target.sessionAlive) {
         return { reset: "kept" };
     }
 
-    for (const controller of inFlight) {
+    for (const controller of target.inFlight) {
         controller.abort(CANCELLED);
     }
 
-    const reset = forgetAnafSession();
-    sessionReset = reset.catch(() => {});
+    const reset = forgetSession(target);
+    target.sessionReset = reset.catch(() => {});
 
     try {
         await reset;
@@ -299,23 +382,34 @@ async function resetLostSession() {
     }
 }
 
-async function openLogin(url) {
-    const outcome = await resetLostSession();
-    await chrome.tabs.create({ url });
+async function openLogin({ target, href }) {
+    const outcome = await resetLostSession(target);
+    await chrome.tabs.create({ url: href });
 
     return { ok: true, ...outcome };
 }
 
 async function handle(message, controller) {
-    const url = allowedUrl(message?.url);
+    const forbidden = { ok: false, error: "forbidden_url" };
 
     switch (message?.type) {
         case "ping":
             return { ok: true, version: chrome.runtime.getManifest().version };
-        case "fetch":
-            return url ? proxyFetch(url, controller) : { ok: false, error: "forbidden_url" };
-        case "login":
-            return url ? openLogin(url) : { ok: false, error: "forbidden_url" };
+        case "fetch": {
+            const url = allowedUrl(message.url, SPV.api);
+
+            return url ? proxyFetch(SPV, url, controller) : forbidden;
+        }
+        case "upload": {
+            const url = allowedUrl(message.url, DECL.api);
+
+            return url ? proxyUpload(url, message, controller) : forbidden;
+        }
+        case "login": {
+            const login = loginTarget(message.url);
+
+            return login ? openLogin(login) : forbidden;
+        }
         default:
             return { ok: false, error: "unknown_type" };
     }

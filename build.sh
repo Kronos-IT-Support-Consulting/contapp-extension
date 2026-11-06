@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Writes dist/chrome and dist/firefox from the same sources and zips each one.
+# Writes dist/chrome and dist/firefox from the same sources and zips each one, plus dist/chrome-dev and
+# dist/firefox-dev: the same code still matching the local contapp.test hosts, for testing against a local ContApp.
 # Firefox MV3 wants background.scripts, and AMO rejects new add-ons without data_collection_permissions.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 version=$(jq -r '.version' manifest.json)
 
+targets=(chrome firefox chrome-dev firefox-dev)
+
 rm -rf dist
-for target in chrome firefox; do
+for target in "${targets[@]}"; do
     mkdir -p "dist/$target/icons"
     cp background.js content.js "dist/$target/"
     # Only the PNGs the manifest references; the SVG sources stay in the repository.
@@ -22,8 +25,13 @@ production='.content_scripts[].matches |= map(select(test("\\.test/") | not))'
 firefox='.background = {scripts: ["background.js"]} | del(.minimum_chrome_version)
     | .browser_specific_settings.gecko.data_collection_permissions = {required: ["personallyIdentifyingInfo", "financialAndPaymentInfo"]}'
 
+# Dev builds keep the .test hosts and carry their own name and gecko id, so they install beside the store build.
+development='.name += " (dev)" | .browser_specific_settings.gecko.id = "spv-dev@contapp.ro"'
+
 jq "$production | del(.browser_specific_settings)" manifest.json > dist/chrome/manifest.json
 jq "$production | $firefox" manifest.json > dist/firefox/manifest.json
+jq "$development | del(.browser_specific_settings)" manifest.json > dist/chrome-dev/manifest.json
+jq "$development | $firefox" manifest.json > dist/firefox-dev/manifest.json
 
 # Reproducible archives: the same commit gives byte-identical zips on any machine. Every entry gets the commit
 # time (SOURCE_DATE_EPOCH outside a git checkout, else 1980-01-02, the earliest safe zip date), fixed modes,
@@ -34,7 +42,7 @@ epoch=${epoch:-${SOURCE_DATE_EPOCH:-315619200}}
 # GNU date takes -d @epoch, BSD/macOS date takes -r epoch; touch -t reads the result the same way on both.
 stamp=$(date -u -d "@$epoch" +%Y%m%d%H%M.%S 2>/dev/null || date -u -r "$epoch" +%Y%m%d%H%M.%S)
 
-for target in chrome firefox; do
+for target in "${targets[@]}"; do
     archive="dist/contapp-spv-$target-$version.zip"
     (
         cd "dist/$target"

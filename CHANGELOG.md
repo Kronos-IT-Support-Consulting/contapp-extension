@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `{type:"upload", url, field, filename, contentType, body}` POSTs a base64 file as `multipart/form-data` to ANAF's
+  declaration portal (`https://decl.anaf.mfinante.gov.ro/WAS6DUS/`) with the browser's certificate, and answers like
+  `fetch`. `login` also opens `https://decl.anaf.mfinante.gov.ro/`, resetting that host's session on its own. Adds the
+  host permission `*://decl.anaf.mfinante.gov.ro/*`.
+- Privacy policy and store texts cover filing declarations: the signed PDF sent to ANAF's declaration portal, the
+  portal's answer handed to the ContApp page, the new host permission and the per-host cookie reset.
+- `build.sh` also writes `dist/chrome-dev` and `dist/firefox-dev` ("ContApp SPV (dev)"), which keep the local
+  `contapp.test` hosts for testing against a local ContApp; CI attaches their zips, releases never publish them.
+
 ### Changed
 
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on

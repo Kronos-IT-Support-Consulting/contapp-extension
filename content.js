@@ -51,9 +51,14 @@ function decode(response) {
     }
 }
 
+// Only the fields the worker reads cross over; an upload also carries its file, the body as base64.
+function forward({ type, url, field, filename, contentType, body }) {
+    return type === "upload" ? { type, url, field, filename, contentType, body } : { type, url };
+}
+
 // One port per request, so closing it (the page cancels, or navigates away and takes this script with it) tells
 // the worker to abort the fetch.
-function relay(id, type, url) {
+function relay(id, message) {
     if (orphaned()) {
         return Promise.resolve(detach());
     }
@@ -86,7 +91,7 @@ function relay(id, type, url) {
         pending.set(id, cancel);
         port.onMessage.addListener((response) => settle(decode(response)));
         port.onDisconnect.addListener(() => settle(orphaned() ? detach() : { ok: false, error: "extension" }));
-        port.postMessage({ type, url });
+        port.postMessage(message);
     });
 }
 
@@ -114,5 +119,5 @@ async function onMessage(event) {
         return;
     }
 
-    reply(data.id, await relay(data.id, data.type, data.url));
+    reply(data.id, await relay(data.id, forward(data)));
 }
