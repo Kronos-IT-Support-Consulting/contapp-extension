@@ -129,6 +129,17 @@ test("relays only type and url, and posts the reply with the same id to the page
     assert.deepEqual(plain(posted.map((p) => [p.targetOrigin, p.transfer])), [[ORIGIN, []], [ORIGIN, []]]);
 });
 
+test("relays an upload's file fields, and drops them from every other type", async () => {
+    const { dispatch, sent } = loadContent(() => ({ ok: true }));
+    const file = { field: "linkdoc", filename: "D700.pdf", contentType: "application/pdf", body: "JVBERi0=" };
+    const url = "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do";
+
+    await dispatch({ channel: "contapp-spv", id: "1", type: "upload", url, ...file, method: "PUT", headers: { Cookie: "x" } });
+    await dispatch({ ...request, ...file });
+
+    assert.deepEqual(sent, [{ type: "upload", url, ...file }, { type: "fetch", url: request.url }]);
+});
+
 test("turns a base64 body into a transferred ArrayBuffer", async () => {
     for (const text of ["%PDF-1.7", ""]) {
         const { dispatch, posted } = loadContent(() => bodyOf(text));

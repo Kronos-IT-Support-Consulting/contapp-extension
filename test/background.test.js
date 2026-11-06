@@ -32,6 +32,7 @@ function loadBackground(fetchImpl, {
     granted = true, createTab, cookies = [], getAllCookies, firefox = false, hosts = manifest.host_permissions, online = true,
 } = {}) {
     const fetchCalls = [];
+    const bodies = [];
     const signals = [];
     const deadlines = [];
     const cookieQueries = [];
@@ -50,6 +51,8 @@ function loadBackground(fetchImpl, {
         btoa,
         AbortController,
         TextDecoder,
+        FormData,
+        Blob,
         navigator: { onLine: online },
         // Recorded instead of scheduled, so a test fires the 90 s deadline when it wants to.
         setTimeout: (callback, ms) => deadlines.push({ callback, ms, cleared: false }),
@@ -58,8 +61,9 @@ function loadBackground(fetchImpl, {
         clearInterval: (id) => (timers[id - 1].cleared = true),
         console: { debug: (...args) => debug.push(args), warn: (...args) => warnings.push(args) },
         fetch: async (url, options) => {
-            const { signal, ...rest } = options;
+            const { signal, body, ...rest } = options;
             fetchCalls.push(structuredClone({ url, options: rest }));
+            bodies.push(body);
             signals.push(signal);
 
             return fetchImpl(url, options, context);
@@ -139,7 +143,7 @@ function loadBackground(fetchImpl, {
     const send = (message, sender) => connect(message, sender).reply;
 
     return {
-        send, connect, fetchCalls, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        send, connect, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
         keepAlives: () => keepAlives, debug, warnings,
     };
 }
@@ -157,17 +161,20 @@ test("ping answers the manifest version", async () => {
     assert.deepEqual(await send({ type: "ping" }), { ok: true, version: "9.8.7" });
 });
 
-test("the host the worker fetches from is the one the manifest asks permission for", () => {
+test("the hosts the worker fetches from are the ones the manifest asks permission for", () => {
     const context = vm.createContext({ chrome: { runtime: { onConnect: { addListener() {} } } }, URL });
     vm.runInContext(source, context);
 
-    const origin = `${new URL(vm.runInContext("ALLOWED_PREFIX", context)).origin}/*`;
-    assert.deepEqual(structuredClone(vm.runInContext("HOST_PERMISSION", context)), { origins: [origin] });
-    assert.ok(permitted(manifest.host_permissions, vm.runInContext("ALLOWED_PREFIX", context)));
+    const sites = structuredClone(vm.runInContext("SITES.map(({ host, api, permission, cookieOrigins }) => ({ host, api, permission, cookieOrigins }))", context));
+
+    for (const { host, api, permission } of sites) {
+        assert.deepEqual(permission, { origins: [`${new URL(api).origin}/*`] }, host);
+        assert.ok(permitted(manifest.host_permissions, api), host);
+    }
     assert.deepEqual(
         manifest.host_permissions,
-        structuredClone(vm.runInContext("COOKIE_PERMISSION", context)).origins,
-        "the manifest asks for exactly what the session reset checks for",
+        sites.flatMap(({ cookieOrigins }) => cookieOrigins),
+        "the manifest asks for exactly what the session resets check for",
     );
     assert.deepEqual(manifest.permissions, ["cookies"], "only cookies, to reset ANAF's session before the login tab");
 });
@@ -647,4 +654,192 @@ test("closing the port aborts the fetch, frees its slot and posts nothing", asyn
     assert.equal(signals[0].aborted, true);
     assert.equal((await queued).ok, true, "the queued fetch got the freed slot");
     assert.equal(await stuck[0].reply, "closed");
+});
+
+const DECL_URL = "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do";
+const DECL_HOME = "https://decl.anaf.mfinante.gov.ro/";
+// Every byte value, so the base64 round trip cannot hide behind ASCII.
+const PDF_BYTES = Uint8Array.from({ length: 600 }, (_, i) => (i < 5 ? "%PDF-".charCodeAt(i) : (i * 31 + 7) & 0xff));
+const RECEIPT = new TextEncoder().encode('<html>Succes depunere. Indexul este <b style="x">1285389142</b></html>');
+const upload = (fields = {}) => ({
+    type: "upload",
+    url: DECL_URL,
+    field: "linkdoc",
+    filename: "D700.pdf",
+    contentType: "application/pdf",
+    body: Buffer.from(PDF_BYTES).toString("base64"),
+    ...fields,
+});
+const stalled = (url, options) =>
+    new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason)));
+
+test("upload posts the file as multipart/form-data and answers in fetch's reply shape", async () => {
+    const { send, fetchCalls, bodies } = loadBackground(respond(200, RECEIPT, DECL_URL));
+
+    assert.deepEqual(await send(upload()), { ok: true, status: 200, url: DECL_URL, body: Buffer.from(RECEIPT).toString("base64") });
+    assert.deepEqual(fetchCalls, [{
+        url: DECL_URL,
+        options: { method: "POST", credentials: "include", redirect: "follow", cache: "no-store" },
+    }]);
+
+    const file = bodies[0].get("linkdoc");
+    assert.deepEqual([...bodies[0].keys()], ["linkdoc"]);
+    assert.deepEqual([file.name, file.type], ["D700.pdf", "application/pdf"]);
+    assert.deepEqual(new Uint8Array(await file.arrayBuffer()), PDF_BYTES);
+
+    const multipart = await new Response(bodies[0]).text();
+    assert.match(multipart, /Content-Disposition: form-data; name="linkdoc"; filename="D700.pdf"\r\nContent-Type: application\/pdf\r\n/);
+});
+
+test("upload only goes under the declaration portal's /WAS6DUS/, and fetch never goes there", async () => {
+    const { send, fetchCalls } = loadBackground(unreachable);
+    const forbidden = [
+        undefined, 42, "", "not a url",
+        ANAF_URL,
+        DECL_HOME,
+        "https://decl.anaf.mfinante.gov.ro/my.policy",
+        "https://decl.anaf.mfinante.gov.ro/WAS6DUS",
+        "https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do",
+        "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
+        "https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do",
+        "https://decl.anaf.mfinante.gov.ro@evil.example/WAS6DUS/displayFile.do",
+        "https://user@decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
+        "https://decl.anaf.mfinante.gov.ro/WAS6DUS/../my.policy",
+        "https://decl.anaf.mfinante.gov.ro/WAS6DUS/%2e%2e/my.policy",
+        "https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
+    ];
+
+    for (const url of forbidden) {
+        assert.deepEqual(await send(upload({ url })), { ok: false, error: "forbidden_url" }, String(url));
+    }
+    assert.deepEqual(await send({ type: "fetch", url: DECL_URL }), { ok: false, error: "forbidden_url" });
+    assert.equal(fetchCalls.length, 0);
+});
+
+test("an upload without a usable file is a network error and sends nothing", async () => {
+    const { send, fetchCalls } = loadBackground(unreachable);
+    const invalid = [
+        [{ body: "@@not base64@@" }, "upload body is not base64"],
+        [{ body: undefined }, "upload needs field, filename, contentType and body as strings"],
+        [{ body: new Uint8Array(4) }, "upload needs field, filename, contentType and body as strings"],
+        [{ field: "" }, "upload needs field, filename, contentType and body as strings"],
+        [{ field: undefined }, "upload needs field, filename, contentType and body as strings"],
+        [{ filename: null }, "upload needs field, filename, contentType and body as strings"],
+        [{ contentType: 7 }, "upload needs field, filename, contentType and body as strings"],
+    ];
+
+    for (const [fields, message] of invalid) {
+        assert.deepEqual(await send(upload(fields)), { ok: false, error: "network", message }, JSON.stringify(fields));
+    }
+    assert.equal(fetchCalls.length, 0);
+});
+
+test("upload refuses to run without the declaration portal's host permission", async () => {
+    const { send, fetchCalls } = loadBackground(unreachable, { granted: false });
+
+    assert.deepEqual(await send(upload()), {
+        ok: false,
+        error: "permission",
+        message: "permission for https://decl.anaf.mfinante.gov.ro/* is not granted",
+    });
+    assert.equal(fetchCalls.length, 0);
+});
+
+test("an upload that lands on F5's login page is a lost session, whose body never reaches the page", async () => {
+    for (const url of [`${DECL_HOME}my.policy`, DECL_HOME, "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"]) {
+        let read = false;
+        const { send } = loadBackground(async () => ({
+            status: 200,
+            url,
+            body: { cancel: async () => {} },
+            arrayBuffer: async () => (read = true),
+        }));
+
+        assert.deepEqual(await send(upload()), { ok: false, error: "session_lost" }, url);
+        assert.equal(read, false, url);
+    }
+});
+
+test("upload failures map like fetch's: certificate_required, timeout", async () => {
+    assert.deepEqual(await loadBackground(throwing("TypeError", "Failed to fetch")).send(upload()), { ok: false, error: "certificate_required" });
+
+    const timed = loadBackground((url, options) => {
+        timed.deadlines.at(-1).callback();
+        throw options.signal.reason;
+    });
+    assert.deepEqual(await timed.send(upload()), { ok: false, error: "timeout" });
+});
+
+test("closing the port aborts the upload and posts nothing", async () => {
+    const { connect, signals } = loadBackground(stalled);
+    const pending = connect(upload());
+
+    await new Promise((resolve) => setImmediate(resolve));
+    pending.close();
+
+    assert.equal(signals[0].aborted, true);
+    assert.equal(await pending.reply, "closed");
+});
+
+test("login opens the declaration portal's root, and refuses its other pages", async () => {
+    const { send, createdTabs } = loadBackground(unreachable);
+
+    for (const url of [DECL_HOME, "https://decl.anaf.mfinante.gov.ro", "HTTPS://DECL.ANAF.MFINANTE.GOV.RO:443/", DECL_URL]) {
+        assert.equal((await send({ type: "login", url })).ok, true, url);
+    }
+    assert.deepEqual(createdTabs.map(({ url }) => url), [DECL_HOME, DECL_HOME, DECL_HOME, DECL_URL]);
+
+    for (const url of [`${DECL_HOME}my.policy`, `${DECL_HOME}?x`, "http://decl.anaf.mfinante.gov.ro/", "https://anaf.mfinante.gov.ro/"]) {
+        assert.deepEqual(await send({ type: "login", url }), { ok: false, error: "forbidden_url" }, url);
+    }
+});
+
+test("each site keeps its own session: a login clears only the cookies and requests of its own host", async () => {
+    const cookies = [
+        { name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" },
+        { name: "TS01", domain: ".anaf.ro", hostOnly: false, path: "/", storeId: "0" },
+        { name: "MRHSession", domain: "decl.anaf.mfinante.gov.ro", hostOnly: true, path: "/", storeId: "0", secure: true },
+        { name: "F5_ST", domain: ".decl.anaf.mfinante.gov.ro", hostOnly: false, path: "/WAS6DUS", storeId: "0" },
+    ];
+    const replies = [answered(), { status: 200, url: `${DECL_HOME}my.policy`, arrayBuffer: async () => new ArrayBuffer(0) }];
+    const { send, removedCookies, cookieQueries } = loadBackground(() => replies.shift(), { cookies });
+
+    assert.equal((await send({ type: "fetch", url: ANAF_URL })).ok, true);
+    assert.deepEqual(await send(upload()), { ok: false, error: "session_lost" });
+
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, "SPV is still alive");
+    assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "cleared" });
+    assert.deepEqual(cookieQueries, [{ domain: "decl.anaf.mfinante.gov.ro", partitionKey: {} }]);
+    assert.deepEqual(removedCookies, [
+        { url: "https://decl.anaf.mfinante.gov.ro/", name: "MRHSession", storeId: "0" },
+        { url: "https://decl.anaf.mfinante.gov.ro/WAS6DUS", name: "F5_ST", storeId: "0" },
+    ]);
+
+    // A successful upload keeps the portal's session at the next login.
+    const live = loadBackground(respond(200, RECEIPT, DECL_URL), { cookies });
+    await live.send(upload());
+    assert.deepEqual(await live.send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
+});
+
+test("a login on the portal cancels the uploads stuck on it but not the SPV fetches, and the slots are per host", async () => {
+    const { send, fetchCalls } = loadBackground(stalled);
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    const fetches = Array.from({ length: 4 }, () => send({ type: "fetch", url: ANAF_URL }));
+    const uploads = Array.from({ length: 5 }, () => send(upload()));
+
+    await settle();
+    assert.deepEqual(fetchCalls.map(({ url }) => url), [...Array(4).fill(ANAF_URL), ...Array(4).fill(DECL_URL)]);
+
+    assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "cleared" });
+    for (const reply of await Promise.all(uploads)) {
+        assert.deepEqual(reply, { ok: false, error: "cancelled" });
+    }
+
+    let fetchesSettled = false;
+    Promise.all(fetches).then(() => (fetchesSettled = true));
+    await settle();
+    assert.equal(fetchesSettled, false, "the SPV fetches are still running");
+
+    await send({ type: "login", url: ANAF_URL });
+    assert.deepEqual((await Promise.all(fetches)).map(({ error }) => error), Array(4).fill("cancelled"));
 });
