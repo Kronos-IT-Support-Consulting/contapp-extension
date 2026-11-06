@@ -39,6 +39,12 @@ jobs:
             jq -e '[.content_scripts[].matches[] | select(test("\\.test/"))] | length == 0' "dist/$target/manifest.json"
           done
 
+      - name: Dev manifests keep the local contapp.test hosts
+        run: |
+          for target in chrome-dev firefox-dev; do
+            jq -e '[.content_scripts[].matches[] | select(test("\\.test/"))] | length > 0' "dist/$target/manifest.json"
+          done
+
       - run: npm run lint
 
       # Loads dist/chrome into Chromium; every request is answered by test routes, nothing reaches ANAF.
