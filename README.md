@@ -28,7 +28,7 @@ See [PRIVACY.md](PRIVACY.md).
 | `login-tab.js` | Injected into the declaration portal's F5 form and pages and into SPV REST answers; in a login tab the extension opened, submits the portal's F5 form once and reports when the login ended, so the worker closes the tab. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
 | `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`), plus the `-dev` builds that also run on the local `contapp.test` hosts. |
-| `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
+| `test/` | `node:test` suites that load the three scripts in a stubbed `vm` context. |
 | `store/` | Store listing texts, the 512 px store icon and the screenshots. |
 | `PRIVACY.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` | Privacy policy (published by GitHub Pages), changelog, security policy, contribution rules, MIT licence. |
 | `.github/` | CI and release workflows, Dependabot, code owners, pull request template. |
@@ -74,6 +74,10 @@ host permission at any time (*about:addons* → ContApp SPV → the permissions 
 `gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
 advisory warning about the Android minimum version, which is expected.
 
+In Firefox the SPV login tab does not close by itself: Firefox shows the JSON answer in its own viewer, where
+extensions' content scripts do not run, so the user closes the tab once it shows the JSON. The declaration portal's
+login tab does close in Firefox.
+
 Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
 service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
 `chrome.cookies` takes a `partitionKey`, which the login needs to clear partitioned ANAF cookies too.
@@ -90,8 +94,10 @@ opened by this extension's content script from a page on one of the hosts the ma
 the port (a `cancel`, or the tab navigating away or closing) aborts the request.
 
 Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fetch`, only URLs under
-`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` for `upload`, and either of those or exactly
-`https://decl.anaf.mfinante.gov.ro/` (the declaration portal's start page) for `login`.
+`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` for `upload`, and for `login` only the two addresses ContApp logs in
+with: the SPV message list, `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje` with any query (`?zile=60`), or
+exactly `https://decl.anaf.mfinante.gov.ro/` (the declaration portal's start page). A login tab is a visible request
+made with the user's certificate, so nothing else is opened on the page's behalf.
 
 | page sends | extension answers |
 |---|---|
@@ -150,10 +156,13 @@ replies are unchanged.
   `decl.anaf.mfinante.gov.ro` (revoked in Firefox, or Chrome's site access set to "on click"); `message` names the
   missing grant. The page should ask the user to grant site access.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the prefix the type
-  accepts (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
+  accepts (so `…/SPVWS2/rest/../x` is refused), or its path still carries an encoded dot, slash or backslash or a `;`
+  path parameter, which the parser leaves alone but a server may resolve (`…/rest/..;/x`, `…/rest/..%2Fx`); the query
+  is not checked. The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
-  response or upload too large to hand over (above 47 MiB), an upload whose fields are unusable, and a login tab that
-  could not be opened.
+  response or upload too large to hand over (above 47 MiB; an upload whose base64 exceeds Chrome's 64 MiB message
+  limit, a file above about 48 MiB, is refused by the content script with Chrome's own message before anything reaches
+  the worker), an upload whose fields are unusable, and a login tab that could not be opened.
 - `forbidden_origin`: the request came from a page the extension does not serve. ContApp never sees it in
   practice, since the content script only runs on those hosts.
 - `extension`: the content script got no usable answer from the service worker (a worker that died mid-request).
@@ -181,6 +190,8 @@ A `login` opens its tab next to the ContApp tab (`openerTabId`), so closing it b
 The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it restarted, the user
 clicks the button and closes the tab by hand. ANAF opened any other way is left alone. Detecting the SPV answer needs
 the content script: the tab's URL alone cannot tell a JSON answer from the gateway's HTML page under the same prefix.
+Chrome's PDF viewer runs it; Firefox's JSON viewer and pdf.js do not, so in Firefox the SPV login tab stays open until
+the user closes it (the portal's tab closes there too).
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 
@@ -216,9 +227,9 @@ window.postMessage({ channel: "contapp-spv", id, type: "ping" }, location.origin
 ## How ContApp uses it
 
 The page side of the protocol (`spv-bridge.js`) lives in the ContApp application, not here. It detects the
-extension through `<html data-spv-extension>`, sends `ping`/`fetch`/`login` requests, and ContApp's server
-parses the SPV responses it hands back. ContApp's connect form offers only the browser extension as the
-way to reach SPV, so any change to the message shapes above must ship in both repositories together.
+extension through `<html data-spv-extension>`, sends `ping`/`fetch`/`upload`/`login`/`cancel` requests, and ContApp's
+server parses the SPV responses it hands back. ContApp's connect form offers only the browser extension as the way
+to reach SPV, so any change to the message shapes above must ship in both repositories together.
 
 ### End-to-end walkthrough (what the user sees)
 
@@ -236,8 +247,12 @@ way to reach SPV, so any change to the message shapes above must ship in both re
    choose the SPV certificate, then the token asks for its PIN. The tab ends on a raw JSON page (either
    a message list or `{"eroare":…}`). That JSON *is* the success: the browser now holds the ANAF
    session cookie and remembers the certificate for this host. The extension closes the tab by itself and
-   ContApp comes back.
+   ContApp comes back (in Firefox the JSON opens in Firefox's viewer, where the extension's script does not run, so
+   close the tab yourself).
    If the tab shows an F5 `/my.policy` page instead, wait for it to redirect; if it stays blank, reload it once.
+   If no picker shows at all: Chrome and Edge 128+ remember "no certificate" for a site when none was available
+   the first time ANAF asked (token not plugged in, middleware not running), until the browser is closed completely
+   (every window) and reopened. Plug the token in before the first **Autentificare ANAF**.
 4. **Verify again** — back in ContApp, click **Verifică**. A success toast *Certificat valid pentru CNP …,
    cu acces la N CUI-uri* appears and the page fills in *CNP titular*, *Serie certificat* and *CUI-uri acces*.
 5. **Sync the inbox** — sidebar *Declarații* → *Mesaje SPV* → **Sincronizează SPV**. The toast reports
@@ -279,7 +294,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    await ask({ type: "fetch", url });
    ```
 6. Login: `await ask({ type: "login", url })`. Expect `reset: "cleared"`: the fetch in step 5 found no session.
-   A tab opens; pick the certificate, enter the PIN, confirm JSON shows, then close the tab.
+   A tab opens; pick the certificate, enter the PIN; the extension closes the tab once the JSON shows.
 7. Fetch again: `const r = await ask({ type: "fetch", url }); r.status; new TextDecoder().decode(r.body)`.
    Expect status 200 and the messages JSON.
 8. Download one message: take an `id` from step 7 and run
@@ -309,9 +324,9 @@ syncing.
 Requires Node 22+, `jq` and `zip`.
 
 ```sh
-npm install      # web-ext and the Chrome Web Store uploader, the only dev dependencies
+npm install      # web-ext, the Chrome Web Store uploader and Playwright, the only dev dependencies
 npm test         # node:test suites in test/
-./build.sh       # dist/chrome, dist/firefox and both zips
+./build.sh       # the four build directories and zips
 npm run lint     # web-ext lint on dist/firefox (run ./build.sh first)
 ```
 
@@ -413,7 +428,8 @@ from other stores), so the Edge listing below is optional.
 
 - [x] Privacy policy: [PRIVACY.md](PRIVACY.md), served by GitHub Pages at <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>.
 - [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for the
-      `webserviced.anaf.ro` and `anaf.ro` host permissions, data-usage disclosure matching the privacy policy.
+      `webserviced.anaf.ro`, `anaf.ro` and `decl.anaf.mfinante.gov.ro` host permissions and the two content scripts
+      (texts in [store/listing.md](store/listing.md)), data-usage disclosure matching the privacy policy.
 - [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.
@@ -434,3 +450,5 @@ from other stores), so the Edge listing below is optional.
 - The content script runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and replies go to the whole page through `window.postMessage`: any
   script those pages load, third-party ones included, can drive the proxy and read the SPV answers. Keep those
   pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.
+- In Firefox the SPV login tab does not close by itself: the JSON answer is shown by Firefox's viewer, where
+  extensions' content scripts do not run, so the user closes it. The declaration portal's tab does close.

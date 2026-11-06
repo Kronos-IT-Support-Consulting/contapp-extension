@@ -120,7 +120,7 @@ When the user clicks "Autentificare ANAF" in ContApp and the ANAF session of tha
 Opening the ANAF login tab (`chrome.tabs.create`) needs no permission; if a form asks why the extension opens tabs:
 
 ```
-When the user clicks "Autentificare ANAF" in ContApp, the extension opens the ANAF SPV address, or the declaration portal's start page https://decl.anaf.mfinante.gov.ro/, in a new tab (chrome.tabs.create, which needs no permission). A request made by the service worker cannot show the browser's client-certificate picker or the token's PIN prompt; a visible tab can. After the user picks the certificate in that tab, the browser can reuse it for the extension's requests. The tab opens next to the ContApp tab (openerTabId) and is closed again (chrome.tabs.remove, no permission needed) once the login succeeded, and only that tab, whose id the extension got from chrome.tabs.create. The extension does not query or read any tab.
+When the user clicks "Autentificare ANAF" in ContApp, the extension opens the SPV message list address https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje, or the declaration portal's start page https://decl.anaf.mfinante.gov.ro/, in a new tab (chrome.tabs.create, which needs no permission). A request made by the service worker cannot show the browser's client-certificate picker or the token's PIN prompt; a visible tab can. After the user picks the certificate in that tab, the browser can reuse it for the extension's requests. The tab opens next to the ContApp tab (openerTabId) and is closed again (chrome.tabs.remove, no permission needed) once the login succeeded, and only that tab, whose id the extension got from chrome.tabs.create. The extension does not query or read any tab.
 ```
 
 Host permissions `*://webserviced.anaf.ro/*` and `*://anaf.ro/*`:
@@ -140,7 +140,7 @@ ANAF's declaration filing portal only answers over mutual TLS and sends no CORS 
 Content script `login-tab.js` on `https://decl.anaf.mfinante.gov.ro/my.policy*`, `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*` and `https://webserviced.anaf.ro/SPVWS2/rest/*`:
 
 ```
-It saves the user clicks in the ANAF login tab the extension opened. On the declaration portal's F5 login page it asks the service worker whether this tab is one the extension opened for a ContApp login (the worker remembers the ids of the tabs it created); only then does it submit the page's "Prezentare certificat" form (#auth_form), once per tab, so a certificate picker the user cancels does not loop. On the portal's pages behind the login, or on an SPV REST answer served as JSON or PDF, it tells the worker the login succeeded, and the worker closes that tab (chrome.tabs.remove, only for tab ids it created) so the user is back in ContApp. The SPV match is needed because the tab's URL alone cannot tell an SPV answer from the F5 gateway's HTML page under the same prefix; the script checks only document.contentType. In any other tab showing these addresses it does nothing. It reads no page content and sends nothing but the message type.
+It saves the user clicks in the ANAF login tab the extension opened. On the declaration portal's F5 login page it asks the service worker whether this tab is one the extension opened for a ContApp login (the worker remembers the ids of the tabs it created); only then does it submit the page's "Prezentare certificat" form (#auth_form), once per tab, so a certificate picker the user cancels does not loop. On the portal's pages behind the login, or on an SPV REST answer served as JSON or PDF, it tells the worker the login succeeded, and the worker closes that tab (chrome.tabs.remove, only for tab ids it created) so the user is back in ContApp. The SPV match is needed because the tab's URL alone cannot tell an SPV answer from the F5 gateway's HTML page under the same prefix; the script checks only document.contentType. In Firefox the JSON answer opens in Firefox's own viewer, where content scripts do not run, so there the SPV tab stays open for the user to close; the portal's tab closes. In any other tab showing these addresses it does nothing. It reads no page content and sends nothing but the message type.
 ```
 
 Content script on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`:
@@ -152,7 +152,7 @@ The content script is the bridge between the ContApp page and the service worker
 Remote code: **No, I am not using remote code.**
 
 ```
-All code ships in the package (background.js, content.js); nothing is downloaded or evaluated at runtime.
+All code ships in the package (background.js, content.js, login-tab.js); nothing is downloaded or evaluated at runtime.
 ```
 
 ### Data usage
@@ -225,7 +225,7 @@ If AMO asks for review notes or source code:
 ```
 ContApp SPV is a companion extension for ContApp (https://contapp.ro), a Romanian online accounting application. It relays requests from ContApp pages to ANAF's SPV web service (https://webserviced.anaf.ro/SPVWS2/rest/), and the signed PDF declarations the user chooses to file to ANAF's declaration portal (https://decl.anaf.mfinante.gov.ro/WAS6DUS/), so the browser can authenticate with the user's client certificate, and returns the raw response to the ContApp page. It stores nothing itself; because the relayed SPV responses carry the certificate holder's CNP, CUIs and tax documents, and filed declarations carry tax and personal data, which the ContApp page then stores in the user's account, the manifest declares data_collection_permissions.required = [personallyIdentifyingInfo, financialAndPaymentInfo] (Firefox 140+ shows this in the install prompt).
 
-Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js and the PNG icons into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration). To reproduce: ./build.sh (requires jq and zip).
+Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js, login-tab.js and the PNG icons into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration, and without the local contapp.test entries the source manifest's content_scripts[0].matches keeps for development). To reproduce: ./build.sh (requires jq and zip). In Firefox the SPV login tab is not closed by the extension: the JSON answer opens in Firefox's viewer, where content scripts do not run, so the user closes it; the declaration portal's tab is closed as in Chrome.
 
 Testing end to end needs a ContApp account and a Romanian qualified certificate with SPV access; a screencast is available on request at suport@contapp.ro.
 ```

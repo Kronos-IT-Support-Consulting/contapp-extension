@@ -27,7 +27,7 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Syntax check
-        run: node --check background.js && node --check content.js
+        run: for f in background.js content.js login-tab.js; do node --check "$f"; done
 
       - run: npm test
 

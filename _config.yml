@@ -4,6 +4,7 @@ description: Browser extension that lets ContApp read ANAF SPV messages with the
 exclude:
   - background.js
   - content.js
+  - login-tab.js
   - manifest.json
   - build.sh
   - package.json
@@ -12,3 +13,5 @@ exclude:
   - icons/
   - node_modules/
   - dist/
+  - store/
+  - .github/

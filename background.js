@@ -9,6 +9,8 @@ const SPV = site({
     cookieOrigins: ["*://webserviced.anaf.ro/*", "*://anaf.ro/*"],
     // The SPV REST API answers JSON or a PDF; an HTML page under the prefix is the gateway's.
     isAnswer: isRestAnswer,
+    // A login opens the message list, which ContApp verifies the certificate with; its query says how many days.
+    isLogin: (href) => withoutQuery(href) === "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje",
 });
 // The declaration portal: uploads go to /WAS6DUS/, the login starts at the root, which F5 sends through /my.policy.
 const DECL = site({
@@ -22,6 +24,8 @@ const DECL = site({
     cookieOrigins: ["*://decl.anaf.mfinante.gov.ro/*"],
     // The portal answers an upload with its own HTML page; only the final URL tells it from the gateway's.
     isAnswer: () => true,
+    // A login opens the portal's start page, which leads to F5's form.
+    isLogin: (href) => href === "https://decl.anaf.mfinante.gov.ro/",
 });
 const SITES = [SPV, DECL];
 const CHUNK_SIZE = 0x8000;
@@ -63,18 +67,25 @@ function site(config) {
 }
 
 // The normalised href when the URL is under `prefix`, otherwise null. Normalising first means the check runs on
-// what fetch would actually request: "rest/../admin" resolves out of the prefix.
+// what fetch would actually request: "rest/../admin" resolves out of the prefix. The parser leaves an encoded dot,
+// slash or backslash and a ";" path parameter in place ("rest/..;/admin", "rest/..%2Fadmin"), which a server may
+// still resolve into another path; none of them occurs under the prefixes, so a path carrying one is refused.
 function allowedUrl(url, prefix) {
     if (typeof url !== "string") {
         return null;
     }
 
     let href;
+    let pathname;
 
     try {
-        ({ href } = new URL(url));
+        ({ href, pathname } = new URL(url));
     } catch {
         return null; // not a URL at all
+    }
+
+    if (/;|%2e|%2f|%5c/i.test(pathname)) {
+        return null;
     }
 
     return href.startsWith(prefix) ? href : null;
@@ -103,10 +114,11 @@ function isPolicy(target, url) {
     return Boolean(target.policy) && typeof url === "string" && url.split(/[?#]/)[0] === target.policy;
 }
 
-// The site and normalised href a login may open: anywhere under a site's API, or the declaration portal's root.
+// The site and normalised href a login may open: only the one address per site that ContApp logs in with. A login
+// tab is a visible request made with the user's certificate, so nothing else is opened on the page's behalf.
 function loginTarget(url) {
     const href = allowedUrl(url, "https://");
-    const target = href && SITES.find(({ api, home }) => href.startsWith(api) || href === home);
+    const target = href && SITES.find(({ isLogin }) => isLogin(href));
 
     return target ? { target, href } : null;
 }
@@ -199,7 +211,12 @@ function acquireSlot(target, signal) {
             resolve();
         };
         const cancel = () => {
-            waiting.splice(waiting.indexOf(take), 1);
+            const index = waiting.indexOf(take);
+
+            // Not -1: splice(-1, 1) would drop someone else's waiter, should `take` ever leave the queue earlier.
+            if (index >= 0) {
+                waiting.splice(index, 1);
+            }
             reject(signal.reason);
         };
 
@@ -429,11 +446,14 @@ async function proxyUpload(url, message, controller) {
     return answer;
 }
 
-// Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all.
+// Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all. Chrome
+// rejects the property, and since Chrome 148 it has a `browser` namespace too, so Firefox is told by an API only it
+// has: runtime.getBrowserInfo.
 function cookieQuery(target) {
     const query = { domain: target.cookieDomain, partitionKey: {} };
+    const firefox = typeof chrome.runtime.getBrowserInfo === "function";
 
-    return typeof browser === "undefined" ? query : { ...query, firstPartyDomain: null };
+    return firefox ? { ...query, firstPartyDomain: null } : query;
 }
 
 // The browser sends the host its own cookies and those set on a parent domain such as .anaf.ro.
@@ -513,10 +533,13 @@ function forgetLoginTab(tabId) {
     loginTabs.delete(tabId);
 }
 
-// The tab opens next to the ContApp tab that asked, so closing it brings that tab back and the page resumes.
+// The tab opens next to the ContApp tab that asked, in that tab's window, so closing it brings that tab back and the
+// page resumes. Without `windowId` Chrome creates the tab in the last focused window and then refuses an opener that
+// lives in another one ("Tab opener must be in the same window as the updated tab").
 async function openLogin({ target, href }, opener) {
     const outcome = await resetLostSession(target);
-    const tab = await chrome.tabs.create({ url: href, ...(opener !== undefined && { openerTabId: opener }) });
+    const beside = opener?.id !== undefined && { openerTabId: opener.id, ...(opener.windowId !== undefined && { windowId: opener.windowId }) };
+    const tab = await chrome.tabs.create({ url: href, ...beside });
 
     if (tab?.id !== undefined) {
         watchLoginTab(tab.id, target);
@@ -572,7 +595,7 @@ async function handle(message, controller, sender) {
         case "login": {
             const login = loginTarget(message.url);
 
-            return login ? openLogin(login, sender?.tab?.id) : forbidden;
+            return login ? openLogin(login, sender?.tab) : forbidden;
         }
         default:
             return { ok: false, error: "unknown_type" };

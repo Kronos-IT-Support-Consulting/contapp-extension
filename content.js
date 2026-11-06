@@ -91,7 +91,15 @@ function relay(id, message) {
         pending.set(id, cancel);
         port.onMessage.addListener((response) => settle(decode(response)));
         port.onDisconnect.addListener(() => settle(orphaned() ? detach() : { ok: false, error: "extension" }));
-        port.postMessage(message);
+
+        // Chrome throws instead of sending a message over 64 MiB (an upload's base64 of a file above about 48 MiB);
+        // the page is told rather than left waiting for an answer that never comes.
+        try {
+            port.postMessage(message);
+        } catch (error) {
+            console.debug("ContApp SPV request could not be sent", error);
+            settle({ ok: false, error: "network", message: String(error?.message ?? error) });
+        }
     });
 }
 
