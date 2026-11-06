@@ -15,6 +15,9 @@ const DECL = site({
     host: "decl.anaf.mfinante.gov.ro",
     api: "https://decl.anaf.mfinante.gov.ro/WAS6DUS/",
     home: "https://decl.anaf.mfinante.gov.ro/",
+    policy: "https://decl.anaf.mfinante.gov.ro/my.policy",
+    // ContApp logs where a failed request ended, to notice the portal moving.
+    reportsLanding: true,
     cookieDomain: "decl.anaf.mfinante.gov.ro",
     cookieOrigins: ["*://decl.anaf.mfinante.gov.ro/*"],
     // The portal answers an upload with its own HTML page; only the final URL tells it from the gateway's.
@@ -36,6 +39,9 @@ const TIMED_OUT = "timeout";
 const CANCELLED = "cancelled";
 const SESSION_LOST = "session_lost";
 const PORT_NAME = "contapp-spv";
+// How long a login tab on the declaration portal is watched, so its F5 form can be submitted and the tab closed once
+// the portal is reached; the worker is kept alive for it, since the tab is only known in memory.
+const LOGIN_TAB_MS = 5 * 60_000;
 // Chrome opens at most six connections per host. Keeping two free lets the login tab through while
 // background fetches are stuck on a handshake; the rest wait for a slot.
 const MAX_CONCURRENT_FETCHES = 4;
@@ -72,6 +78,29 @@ function allowedUrl(url, prefix) {
     }
 
     return href.startsWith(prefix) ? href : null;
+}
+
+// Scheme, host and path, for a `message`: the query is left out, since F5 puts its nonces there.
+function withoutQuery(url) {
+    try {
+        const { origin, pathname } = new URL(url);
+
+        return origin + pathname;
+    } catch {
+        return undefined;
+    }
+}
+
+// A lost session, saying where the site's requests ended when it reports that.
+function sessionLost(target, url) {
+    const landing = target.reportsLanding ? withoutQuery(url) : undefined;
+
+    return { ok: false, error: SESSION_LOST, ...(landing && { message: landing }) };
+}
+
+// Whether the URL is F5's login page, minus its query.
+function isPolicy(target, url) {
+    return Boolean(target.policy) && typeof url === "string" && url.split(/[?#]/)[0] === target.policy;
 }
 
 // The site and normalised href a login may open: anywhere under a site's API, or the declaration portal's root.
@@ -133,11 +162,14 @@ function fromContApp(sender) {
 
     const { hostname } = url;
 
-    return chrome.runtime.getManifest().content_scripts.flatMap(({ matches }) => matches).some((pattern) => {
-        const host = pattern.match(/^https:\/\/([^/]+)\/\*$/)?.[1];
+    return chrome.runtime.getManifest().content_scripts
+        .filter(({ js }) => js.includes("content.js"))
+        .flatMap(({ matches }) => matches)
+        .some((pattern) => {
+            const host = pattern.match(/^https:\/\/([^/]+)\/\*$/)?.[1];
 
-        return host?.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
-    });
+            return host?.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
+        });
 }
 
 function keepAlive() {
@@ -186,31 +218,43 @@ function releaseSlot(target) {
     }
 }
 
-async function fetchBody(target, url, init, signal, onHeaders) {
-    let response;
-
+// `{response}`, or `{failure}` with the reply that tells the page why there is none.
+async function request(url, init, signal) {
     try {
-        response = await fetch(url, { ...init, credentials: "include", redirect: "follow", cache: "no-store", signal });
-        onHeaders();
+        return { response: await fetch(url, { ...init, credentials: "include", redirect: "follow", cache: "no-store", signal }) };
     } catch (error) {
-        // An abort is a DOMException, so it lands here; proxyFetch tells the page why from signal.reason.
+        // An abort is a DOMException, so it lands here; withSlot tells the page why from signal.reason.
         // Chrome reports a missing client certificate (ERR_SSL_CLIENT_AUTH_CERT_NEEDED) as a bare TypeError, and so
         // every other network failure: only being offline can be told apart.
         if (error instanceof TypeError) {
-            return navigator.onLine === false ? networkError("offline") : { ok: false, error: "certificate_required" };
+            return { failure: navigator.onLine === false ? networkError("offline") : { ok: false, error: "certificate_required" } };
         }
 
         console.debug("ContApp SPV fetch failed", error);
 
-        return networkError(error);
+        return { failure: networkError(error) };
+    }
+}
+
+function discard(response) {
+    response.body?.cancel().catch(() => {});
+}
+
+async function fetchBody(target, url, init, signal, onHeaders) {
+    const { response, failure } = await request(url, init, signal);
+
+    if (failure) {
+        return failure;
     }
 
-    // A lost session redirects to F5's login pages. Whatever ends up outside the site's API, plain http:// included,
-    // is not read, let alone handed to the page.
-    if (!allowedUrl(response.url, target.api)) {
-        response.body?.cancel().catch(() => {});
+    onHeaders();
 
-        return { ok: false, error: SESSION_LOST };
+    // A lost session redirects to F5's login pages. Whatever ends up outside the site's API, plain http:// included,
+    // is not read, let alone handed to the page. `bounced` stays inside the worker: proxyUpload strips it.
+    if (!allowedUrl(response.url, target.api)) {
+        discard(response);
+
+        return { ...sessionLost(target, response.url), ...(isPolicy(target, response.url) && { bounced: true }) };
     }
 
     try {
@@ -233,9 +277,47 @@ async function fetchBody(target, url, init, signal, onHeaders) {
     }
 }
 
+// F5's login without its page: the portal's start page leads to /my.policy, whose form posts vhost=standard, which is
+// where the gateway asks for the client certificate. Chrome reuses a certificate already chosen for the host in this
+// browser session; without one the request fails like any other certificate request from the worker. Starting from
+// the portal's root (as the browser does) opens F5's access session first, and ends at once on a live session.
+async function reauthenticate(target, signal) {
+    const start = await request(target.home, {}, signal);
+
+    if (start.failure) {
+        return start.failure;
+    }
+
+    discard(start.response);
+
+    if (allowedUrl(start.response.url, target.api)) {
+        return { ok: true };
+    }
+
+    if (!isPolicy(target, start.response.url)) {
+        return sessionLost(target, start.response.url);
+    }
+
+    const login = await request(target.policy, { method: "POST", body: new URLSearchParams({ vhost: "standard" }) }, signal);
+
+    if (login.failure) {
+        return login.failure;
+    }
+
+    discard(login.response);
+
+    return allowedUrl(login.response.url, target.api) ? { ok: true } : sessionLost(target, login.response.url);
+}
+
 // `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every request
-// to the same site. `init` adds the method and body of an upload.
-async function proxyFetch(target, url, controller, init = {}) {
+// to the same site.
+function proxyFetch(target, url, controller) {
+    return withSlot(target, controller, (signal, onHeaders) => fetchBody(target, url, {}, signal, onHeaders));
+}
+
+// Runs `work(signal, onHeaders)` holding one of the site's connection slots, under its deadlines, cancellable, and
+// records from its reply whether the site's session is alive.
+async function withSlot(target, controller, work) {
     // MV3 host permissions are optional in Firefox, and Chrome withholds them under "on click" site access.
     // Without the grant, fetch fails with the same TypeError as a missing certificate.
     if (!(await chrome.permissions.contains(target.permission))) {
@@ -261,7 +343,7 @@ async function proxyFetch(target, url, controller, init = {}) {
         const abortAfter = (ms) => setTimeout(() => controller.abort(TIMED_OUT), ms);
         deadline = abortAfter(FETCH_TIMEOUT_MS);
 
-        const reply = await fetchBody(target, url, init, controller.signal, () => {
+        const reply = await work(controller.signal, () => {
             clearTimeout(deadline);
             deadline = abortAfter(BODY_TIMEOUT_MS);
         });
@@ -270,8 +352,8 @@ async function proxyFetch(target, url, controller, init = {}) {
             return { ok: false, error: controller.signal.reason === TIMED_OUT ? TIMED_OUT : CANCELLED };
         }
 
-        // fetchBody only answers ok for an answer under the site's API.
-        target.sessionAlive = reply.ok && reply.status < 400;
+        // Only an answer under the site's API is ok.
+        target.sessionAlive = reply.ok && !(reply.status >= 400);
 
         return reply;
     } finally {
@@ -309,6 +391,8 @@ function multipart({ field, filename, contentType, body }) {
     return form;
 }
 
+// A declaration is not sent twice unless it is known not to have been filed: only F5 bouncing the POST to its login
+// page, before it reached the portal, is resent, once, after logging in again.
 async function proxyUpload(url, message, controller) {
     let body;
 
@@ -318,7 +402,31 @@ async function proxyUpload(url, message, controller) {
         return networkError(error);
     }
 
-    return proxyFetch(DECL, url, controller, { method: "POST", body });
+    const login = () => withSlot(DECL, controller, (signal) => reauthenticate(DECL, signal));
+    const post = () => withSlot(DECL, controller, (signal, onHeaders) =>
+        fetchBody(DECL, url, { method: "POST", body }, signal, onHeaders));
+    // Without a session known to be alive (every first upload after the worker restarts) the login comes first: a
+    // bounce would cost a whole upload, and a missing certificate is answered before anything is sent.
+    const loginFirst = !DECL.sessionAlive;
+
+    if (loginFirst) {
+        const reply = await login();
+
+        if (!reply.ok) {
+            return reply;
+        }
+    }
+
+    let reply = await post();
+
+    if (reply.bounced && !loginFirst) {
+        const again = await login();
+        reply = again.ok ? await post() : again;
+    }
+
+    const { bounced, ...answer } = reply;
+
+    return answer;
 }
 
 // Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all.
@@ -382,14 +490,68 @@ async function resetLostSession(target) {
     }
 }
 
-async function openLogin({ target, href }) {
+// Tabs `login` opened on the declaration portal, by id: whether decl-login.js already submitted F5's form there, and
+// how to stop watching. One submit per tab: a certificate picker the user cancels lands on the form again, which must
+// not loop.
+const loginTabs = new Map();
+
+function watchLoginTab(tabId) {
+    const stopKeepAlive = keepAlive();
+    const expiry = setTimeout(() => forgetLoginTab(tabId), LOGIN_TAB_MS);
+
+    loginTabs.set(tabId, {
+        submitted: false,
+        stop: () => {
+            clearTimeout(expiry);
+            stopKeepAlive();
+        },
+    });
+}
+
+function forgetLoginTab(tabId) {
+    loginTabs.get(tabId)?.stop();
+    loginTabs.delete(tabId);
+}
+
+// The tab opens next to the ContApp tab that asked, so closing it brings that tab back and the page resumes.
+async function openLogin({ target, href }, opener) {
     const outcome = await resetLostSession(target);
-    await chrome.tabs.create({ url: href });
+    const watched = Boolean(target.policy);
+    const tab = await chrome.tabs.create({ url: href, ...(watched && opener !== undefined && { openerTabId: opener }) });
+
+    if (watched && tab?.id !== undefined) {
+        watchLoginTab(tab.id);
+    }
 
     return { ok: true, ...outcome };
 }
 
-async function handle(message, controller) {
+// decl-login.js asks from F5's form whether to submit it, and reports when the tab reached the portal. Only a tab
+// `login` opened gets a yes or is closed; the portal opened by hand is left alone.
+function onLoginTabMessage(message, sender) {
+    const tabId = sender.tab?.id;
+    const tab = sender.id === chrome.runtime.id ? loginTabs.get(tabId) : undefined;
+
+    if (!tab) {
+        return { submit: false };
+    }
+
+    if (message?.type === "decl-login-form" && isPolicy(DECL, sender.url) && !tab.submitted) {
+        tab.submitted = true;
+
+        return { submit: true };
+    }
+
+    if (message?.type === "decl-login-landed" && allowedUrl(sender.url, DECL.api)) {
+        forgetLoginTab(tabId);
+        DECL.sessionAlive = true;
+        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp SPV could not close the login tab", error));
+    }
+
+    return { submit: false };
+}
+
+async function handle(message, controller, sender) {
     const forbidden = { ok: false, error: "forbidden_url" };
 
     switch (message?.type) {
@@ -403,12 +565,14 @@ async function handle(message, controller) {
         case "upload": {
             const url = allowedUrl(message.url, DECL.api);
 
-            return url ? proxyUpload(url, message, controller) : forbidden;
+            const refused = typeof message.url === "string" ? withoutQuery(message.url) : undefined;
+
+            return url ? proxyUpload(url, message, controller) : { ...forbidden, ...(refused && { message: refused }) };
         }
         case "login": {
             const login = loginTarget(message.url);
 
-            return login ? openLogin(login) : forbidden;
+            return login ? openLogin(login, sender?.tab?.id) : forbidden;
         }
         default:
             return { ok: false, error: "unknown_type" };
@@ -442,9 +606,14 @@ chrome.runtime.onConnect.addListener((port) => {
         controller.abort(CANCELLED);
     });
     port.onMessage.addListener((message) => {
-        handle(message, controller).then(answer, (error) => {
+        handle(message, controller, port.sender).then(answer, (error) => {
             console.debug("ContApp SPV handler failed", error);
             answer(networkError(error));
         });
     });
 });
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    sendResponse(onLoginTabMessage(message, sender));
+});
+chrome.tabs.onRemoved.addListener(forgetLoginTab);

@@ -38,12 +38,16 @@ function loadBackground(fetchImpl, {
     const cookieQueries = [];
     const createdTabs = [];
     const removedCookies = [];
+    const removedTabs = [];
     const events = [];
     const timers = [];
     const debug = [];
     const warnings = [];
     let keepAlives = 0;
+    let tabIds = 100;
     let onConnect;
+    let onMessage;
+    let onTabRemoved;
 
     const context = vm.createContext({
         URL,
@@ -53,6 +57,7 @@ function loadBackground(fetchImpl, {
         TextDecoder,
         FormData,
         Blob,
+        URLSearchParams,
         navigator: { onLine: online },
         // Recorded instead of scheduled, so a test fires the 90 s deadline when it wants to.
         setTimeout: (callback, ms) => deadlines.push({ callback, ms, cleared: false }),
@@ -74,13 +79,18 @@ function loadBackground(fetchImpl, {
                 getManifest: () => ({ version: "9.8.7", content_scripts: manifest.content_scripts }),
                 getPlatformInfo: async () => keepAlives++,
                 onConnect: { addListener: (callback) => (onConnect = callback) },
+                onMessage: { addListener: (callback) => (onMessage = callback) },
             },
             permissions: { contains: async () => granted },
             tabs: {
                 create: createTab ?? (async (tab) => {
                     events.push("tab");
                     createdTabs.push(structuredClone(tab));
+
+                    return { ...tab, id: ++tabIds };
                 }),
+                remove: async (tabId) => removedTabs.push(tabId),
+                onRemoved: { addListener: (callback) => (onTabRemoved = callback) },
             },
             cookies: {
                 getAll: async (query) => {
@@ -141,9 +151,16 @@ function loadBackground(fetchImpl, {
         return { reply, close, disconnected: () => disconnected };
     };
     const send = (message, sender) => connect(message, sender).reply;
+    // Plays decl-login.js: a one-off runtime message from a tab, answered through sendResponse.
+    const tell = (message, tabId, url, id = EXTENSION_ID) => {
+        let response;
+        onMessage(message, { id, url, tab: { id: tabId } }, (value) => (response = structuredClone(value)));
+
+        return response;
+    };
 
     return {
-        send, connect, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
         keepAlives: () => keepAlives, debug, warnings,
     };
 }
@@ -162,7 +179,8 @@ test("ping answers the manifest version", async () => {
 });
 
 test("the hosts the worker fetches from are the ones the manifest asks permission for", () => {
-    const context = vm.createContext({ chrome: { runtime: { onConnect: { addListener() {} } } }, URL });
+    const listener = { addListener() {} };
+    const context = vm.createContext({ chrome: { runtime: { onConnect: listener, onMessage: listener }, tabs: { onRemoved: listener } }, URL });
     vm.runInContext(source, context);
 
     const sites = structuredClone(vm.runInContext("SITES.map(({ host, api, permission, cookieOrigins }) => ({ host, api, permission, cookieOrigins }))", context));
@@ -177,6 +195,11 @@ test("the hosts the worker fetches from are the ones the manifest asks permissio
         "the manifest asks for exactly what the session resets check for",
     );
     assert.deepEqual(manifest.permissions, ["cookies"], "only cookies, to reset ANAF's session before the login tab");
+    assert.deepEqual(
+        manifest.content_scripts.find(({ js }) => js.includes("decl-login.js")).matches,
+        ["https://decl.anaf.mfinante.gov.ro/my.policy*", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*"],
+        "the login helper runs only on the portal's F5 form and the pages behind it",
+    );
 });
 
 test("fetch and login refuse anything that does not resolve under the SPV REST API", async () => {
@@ -658,6 +681,8 @@ test("closing the port aborts the fetch, frees its slot and posts nothing", asyn
 
 const DECL_URL = "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do";
 const DECL_HOME = "https://decl.anaf.mfinante.gov.ro/";
+const DECL_LANDING = "https://decl.anaf.mfinante.gov.ro/WAS6DUS/";
+const POLICY = "https://decl.anaf.mfinante.gov.ro/my.policy";
 // Every byte value, so the base64 round trip cannot hide behind ASCII.
 const PDF_BYTES = Uint8Array.from({ length: 600 }, (_, i) => (i < 5 ? "%PDF-".charCodeAt(i) : (i * 31 + 7) & 0xff));
 const RECEIPT = new TextEncoder().encode('<html>Succes depunere. Indexul este <b style="x">1285389142</b></html>');
@@ -672,45 +697,81 @@ const upload = (fields = {}) => ({
 });
 const stalled = (url, options) =>
     new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason)));
+const landedOn = (url, bytes = new Uint8Array(0)) => ({ status: 200, url, arrayBuffer: async () => bytes.slice().buffer });
+const GET_HOME = { url: DECL_HOME, options: { credentials: "include", redirect: "follow", cache: "no-store" } };
+const POST_POLICY = { url: POLICY, options: { method: "POST", credentials: "include", redirect: "follow", cache: "no-store" } };
+const POST_UPLOAD = { url: DECL_URL, options: { method: "POST", credentials: "include", redirect: "follow", cache: "no-store" } };
+
+// Plays ANAF's F5 gateway in front of the portal: without a session the root and an upload end on /my.policy, and the
+// form's POST opens one when the browser has a certificate for the host (`certificate`), else fails as Chrome does.
+// `upload(context)` overrides what an upload under a live session gets.
+function portal({ session = false, certificate = true, upload: onUpload } = {}) {
+    const state = { session };
+    const impl = (url, options, context) => {
+        if (url === DECL_HOME) {
+            return landedOn(state.session ? DECL_LANDING : `${POLICY}?x=1`);
+        }
+
+        if (url === POLICY) {
+            assert.equal(options.body.toString(), "vhost=standard");
+            if (!certificate) {
+                return throwing("TypeError", "Failed to fetch")(url, options, context);
+            }
+            state.session = true;
+
+            return landedOn(DECL_LANDING);
+        }
+
+        if (!state.session) {
+            return landedOn(POLICY);
+        }
+
+        return onUpload ? onUpload(url, options, context) : landedOn(DECL_URL, RECEIPT);
+    };
+
+    return { impl, state };
+}
+const receipt = { ok: true, status: 200, url: DECL_URL, body: Buffer.from(RECEIPT).toString("base64") };
+const uploadsSent = (fetchCalls) => fetchCalls.filter(({ url }) => url === DECL_URL).length;
 
 test("upload posts the file as multipart/form-data and answers in fetch's reply shape", async () => {
-    const { send, fetchCalls, bodies } = loadBackground(respond(200, RECEIPT, DECL_URL));
+    const { send, fetchCalls, bodies } = loadBackground(portal({ session: true }).impl);
 
-    assert.deepEqual(await send(upload()), { ok: true, status: 200, url: DECL_URL, body: Buffer.from(RECEIPT).toString("base64") });
-    assert.deepEqual(fetchCalls, [{
-        url: DECL_URL,
-        options: { method: "POST", credentials: "include", redirect: "follow", cache: "no-store" },
-    }]);
+    assert.deepEqual(await send(upload()), receipt);
+    assert.deepEqual(fetchCalls, [GET_HOME, POST_UPLOAD]);
 
-    const file = bodies[0].get("linkdoc");
-    assert.deepEqual([...bodies[0].keys()], ["linkdoc"]);
+    const file = bodies[1].get("linkdoc");
+    assert.deepEqual([...bodies[1].keys()], ["linkdoc"]);
     assert.deepEqual([file.name, file.type], ["D700.pdf", "application/pdf"]);
     assert.deepEqual(new Uint8Array(await file.arrayBuffer()), PDF_BYTES);
 
-    const multipart = await new Response(bodies[0]).text();
+    const multipart = await new Response(bodies[1]).text();
     assert.match(multipart, /Content-Disposition: form-data; name="linkdoc"; filename="D700.pdf"\r\nContent-Type: application\/pdf\r\n/);
 });
 
 test("upload only goes under the declaration portal's /WAS6DUS/, and fetch never goes there", async () => {
     const { send, fetchCalls } = loadBackground(unreachable);
+    // The message is the refused URL's origin and path, so a ContApp config pointing elsewhere shows in its logs.
     const forbidden = [
-        undefined, 42, "", "not a url",
-        ANAF_URL,
-        DECL_HOME,
-        "https://decl.anaf.mfinante.gov.ro/my.policy",
-        "https://decl.anaf.mfinante.gov.ro/WAS6DUS",
-        "https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do",
-        "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
-        "https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do",
-        "https://decl.anaf.mfinante.gov.ro@evil.example/WAS6DUS/displayFile.do",
-        "https://user@decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
-        "https://decl.anaf.mfinante.gov.ro/WAS6DUS/../my.policy",
-        "https://decl.anaf.mfinante.gov.ro/WAS6DUS/%2e%2e/my.policy",
-        "https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
+        [undefined], [42], [""], ["not a url"], [new String(DECL_URL)],
+        [ANAF_URL, "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje"],
+        [DECL_HOME, DECL_HOME],
+        [`${POLICY}?nonce=abc`, POLICY],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS", "https://decl.anaf.mfinante.gov.ro/WAS6DUS"],
+        ["https://decl.anaf.mfinante.gov.ro/WAS7DUS/displayFile.do?x=1#y", "https://decl.anaf.mfinante.gov.ro/WAS7DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do", "https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do"],
+        ["http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do", "https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro@evil.example/WAS6DUS/displayFile.do", "https://evil.example/WAS6DUS/displayFile.do"],
+        ["https://user@decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/../my.policy", POLICY],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/%2e%2e/my.policy", POLICY],
+        ["https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
     ];
 
-    for (const url of forbidden) {
-        assert.deepEqual(await send(upload({ url })), { ok: false, error: "forbidden_url" }, String(url));
+    for (const [url, message] of forbidden) {
+        const expected = { ok: false, error: "forbidden_url", ...(message && { message }) };
+        assert.deepEqual(await send(upload({ url })), expected, String(url));
     }
     assert.deepEqual(await send({ type: "fetch", url: DECL_URL }), { ok: false, error: "forbidden_url" });
     assert.equal(fetchCalls.length, 0);
@@ -745,43 +806,110 @@ test("upload refuses to run without the declaration portal's host permission", a
     assert.equal(fetchCalls.length, 0);
 });
 
-test("an upload that lands on F5's login page is a lost session, whose body never reaches the page", async () => {
-    for (const url of [`${DECL_HOME}my.policy`, DECL_HOME, "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"]) {
-        let read = false;
-        const { send } = loadBackground(async () => ({
-            status: 200,
-            url,
-            body: { cancel: async () => {} },
-            arrayBuffer: async () => (read = true),
-        }));
+test("without a known live session the upload logs in silently first, and sends nothing when that fails", async () => {
+    const cases = [
+        ["a certificate already chosen", portal({ certificate: true }).impl, receipt, [GET_HOME, POST_POLICY, POST_UPLOAD]],
+        ["still logged in", portal({ session: true }).impl, receipt, [GET_HOME, POST_UPLOAD]],
+        ["no certificate for the host yet", portal({ certificate: false }).impl, { ok: false, error: "certificate_required" }, [GET_HOME, POST_POLICY]],
+        ["the handshake already wants one", throwing("TypeError", "Failed to fetch"), { ok: false, error: "certificate_required" }, [GET_HOME]],
+        ["offline", throwing("TypeError", "Failed to fetch"), { ok: false, error: "network", message: "offline" }, [GET_HOME], { online: false }],
+        ["F5 shows its form again", () => landedOn(`${POLICY}?nonce=1`), { ok: false, error: "session_lost", message: POLICY }, [GET_HOME, POST_POLICY]],
+        ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/?a=b"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/" }, [GET_HOME]],
+        ["the portal moved", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}WAS7DUS/`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/` }, [GET_HOME, POST_POLICY]],
+        ["the gateway fails", throwing("Error", "boom"), { ok: false, error: "network", message: "boom" }, [GET_HOME]],
+    ];
 
-        assert.deepEqual(await send(upload()), { ok: false, error: "session_lost" }, url);
-        assert.equal(read, false, url);
+    for (const [name, impl, expected, calls, options] of cases) {
+        const { send, fetchCalls, bodies } = loadBackground(impl, options);
+
+        assert.deepEqual(await send(upload()), expected, name);
+        assert.deepEqual(fetchCalls, calls, name);
+        if (calls.includes(POST_POLICY)) {
+            assert.equal(bodies[1].toString(), "vhost=standard", name);
+        }
     }
-});
-
-test("upload failures map like fetch's: certificate_required, timeout", async () => {
-    assert.deepEqual(await loadBackground(throwing("TypeError", "Failed to fetch")).send(upload()), { ok: false, error: "certificate_required" });
 
     const timed = loadBackground((url, options) => {
         timed.deadlines.at(-1).callback();
         throw options.signal.reason;
     });
     assert.deepEqual(await timed.send(upload()), { ok: false, error: "timeout" });
+    assert.equal(uploadsSent(timed.fetchCalls), 0);
 });
 
-test("closing the port aborts the upload and posts nothing", async () => {
-    const { connect, signals } = loadBackground(stalled);
-    const pending = connect(upload());
+test("an upload F5 bounced to its login page is resent exactly once after a silent re-login", async () => {
+    const live = portal({ session: true });
+    const { send, fetchCalls } = loadBackground(live.impl);
+    await send(upload());
+    live.state.session = false; // the session expired between two uploads
 
+    fetchCalls.length = 0;
+    assert.deepEqual(await send(upload()), receipt);
+    assert.deepEqual(fetchCalls, [POST_UPLOAD, GET_HOME, POST_POLICY, POST_UPLOAD]);
+
+    // Bounced again after the re-login: not a third time.
+    const again = loadBackground(portal({ session: true, upload: () => landedOn(POLICY) }).impl);
+    assert.deepEqual(await again.send(upload()), { ok: false, error: "session_lost", message: POLICY });
+    assert.equal(uploadsSent(again.fetchCalls), 1, "the silent login came first, so a bounce is final");
+
+    // The re-login after a bounce cannot find a certificate: the page shows its login prompt.
+    const expiring = portal({ session: true, certificate: false });
+    const lost = loadBackground(expiring.impl);
+    await lost.send(upload());
+    expiring.state.session = false;
+    lost.fetchCalls.length = 0;
+    assert.deepEqual(await lost.send(upload()), { ok: false, error: "certificate_required" });
+    assert.deepEqual(lost.fetchCalls, [POST_UPLOAD, GET_HOME, POST_POLICY]);
+});
+
+test("an upload that may have reached the portal is never resent", async () => {
+    const failures = [
+        ["timeout", "deadline", { ok: false, error: "timeout" }],
+        ["certificate", throwing("TypeError", "Failed to fetch"), { ok: false, error: "certificate_required" }],
+        ["network", throwing("Error", "reset"), { ok: false, error: "network", message: "reset" }],
+        ["HTTP 500", () => landedOn(DECL_URL, new TextEncoder().encode("err")), { ok: true, status: 500, url: DECL_URL, body: "ZXJy" }],
+        ["landed on the root", () => landedOn(`${DECL_HOME}?q`), { ok: false, error: "session_lost", message: DECL_HOME }],
+        ["landed over http", () => landedOn("http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do" }],
+        ["the portal moved", () => landedOn(`${DECL_HOME}WAS7DUS/displayFile.do`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/displayFile.do` }],
+    ];
+
+    for (const [name, failure, expected] of failures) {
+        let failing = false;
+        const loaded = loadBackground(portal({
+            session: true,
+            upload: (url, options, context) => {
+                if (!failing) {
+                    return landedOn(DECL_URL, RECEIPT);
+                }
+                if (failure === "deadline") {
+                    loaded.deadlines.at(-1).callback();
+                    throw options.signal.reason;
+                }
+                const response = failure(url, options, context);
+
+                return name === "HTTP 500" ? { ...response, status: 500 } : response;
+            },
+        }).impl);
+
+        await loaded.send(upload());
+        failing = true;
+        loaded.fetchCalls.length = 0;
+        assert.deepEqual(await loaded.send(upload()), expected, name);
+        assert.deepEqual(loaded.fetchCalls, [POST_UPLOAD], name);
+    }
+
+    // A page that cancels gets cancelled, and nothing is sent again either.
+    const { connect, signals, fetchCalls } = loadBackground(stalled);
+    const pending = connect(upload());
     await new Promise((resolve) => setImmediate(resolve));
     pending.close();
-
     assert.equal(signals[0].aborted, true);
     assert.equal(await pending.reply, "closed");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fetchCalls.length, 1);
 });
 
-test("login opens the declaration portal's root, and refuses its other pages", async () => {
+test("login opens the declaration portal's root next to the ContApp tab, and refuses its other pages", async () => {
     const { send, createdTabs } = loadBackground(unreachable);
 
     for (const url of [DECL_HOME, "https://decl.anaf.mfinante.gov.ro", "HTTPS://DECL.ANAF.MFINANTE.GOV.RO:443/", DECL_URL]) {
@@ -789,9 +917,75 @@ test("login opens the declaration portal's root, and refuses its other pages", a
     }
     assert.deepEqual(createdTabs.map(({ url }) => url), [DECL_HOME, DECL_HOME, DECL_HOME, DECL_URL]);
 
-    for (const url of [`${DECL_HOME}my.policy`, `${DECL_HOME}?x`, "http://decl.anaf.mfinante.gov.ro/", "https://anaf.mfinante.gov.ro/"]) {
+    for (const url of [POLICY, `${DECL_HOME}?x`, "http://decl.anaf.mfinante.gov.ro/", "https://anaf.mfinante.gov.ro/"]) {
         assert.deepEqual(await send({ type: "login", url }), { ok: false, error: "forbidden_url" }, url);
     }
+
+    const fromTab = { ...CONTAPP, tab: { id: 7 } };
+    await send({ type: "login", url: DECL_HOME }, fromTab);
+    await send({ type: "login", url: ANAF_URL }, fromTab);
+    assert.deepEqual(createdTabs.slice(-2), [{ url: DECL_HOME, openerTabId: 7 }, { url: ANAF_URL }], "only the portal's tab is ours to close");
+});
+
+test("F5's form is submitted once, and only in a portal tab the login opened", async () => {
+    const { send, tell } = loadBackground(unreachable);
+    const form = { type: "decl-login-form" };
+
+    await send({ type: "login", url: DECL_HOME }); // tab 101
+    await send({ type: "login", url: ANAF_URL }); // tab 102, SPV: not watched
+
+    const refused = [
+        ["a tab the user opened", form, 55, POLICY],
+        ["the SPV login tab", form, 102, POLICY],
+        ["another extension", form, 101, POLICY, "other-extension"],
+        ["not F5's form", form, 101, DECL_LANDING],
+        ["the portal moved", form, 101, `${DECL_HOME}WAS7DUS/`],
+        ["a lookalike host", form, 101, "https://decl.anaf.mfinante.gov.ro.evil.example/my.policy"],
+        ["an unknown message", { type: "fetch" }, 101, POLICY],
+    ];
+    for (const [name, message, tabId, url, id] of refused) {
+        assert.deepEqual(tell(message, tabId, url, id), { submit: false }, name);
+    }
+
+    assert.deepEqual(tell(form, 101, `${POLICY}?x=1`), { submit: true });
+    assert.deepEqual(tell(form, 101, POLICY), { submit: false }, "a cancelled picker lands on the form again: no loop");
+});
+
+test("the login tab closes once it reaches the portal, only if it is ours, and the session then counts as alive", async () => {
+    const { send, tell, removedTabs } = loadBackground(unreachable);
+    const landed = { type: "decl-login-landed" };
+
+    await send({ type: "login", url: DECL_HOME }); // tab 101
+
+    tell(landed, 55, DECL_LANDING);
+    tell(landed, 101, POLICY);
+    tell(landed, 101, "http://decl.anaf.mfinante.gov.ro/WAS6DUS/");
+    tell(landed, 101, `${DECL_HOME}WAS7DUS/`); // the portal moved: not closed, watched until the 5-minute cap
+    assert.deepEqual(removedTabs, []);
+
+    tell(landed, 101, `${DECL_LANDING}index.jsp`);
+    assert.deepEqual(removedTabs, [101]);
+
+    tell(landed, 101, DECL_LANDING);
+    assert.deepEqual(removedTabs, [101], "forgotten once closed");
+    assert.deepEqual(tell({ type: "decl-login-form" }, 101, POLICY), { submit: false });
+    assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
+});
+
+test("a login tab is watched, with the worker kept alive, until it closes or five minutes pass", async () => {
+    const { send, tell, closeTab, timers, deadlines } = loadBackground(unreachable);
+    const form = { type: "decl-login-form" };
+
+    await send({ type: "login", url: DECL_HOME }); // tab 101
+    await send({ type: "login", url: DECL_HOME }); // tab 102
+    assert.deepEqual(timers.map(({ ms, cleared }) => [ms, cleared]), [[25_000, false], [25_000, false]]);
+
+    closeTab(101);
+    assert.deepEqual(tell(form, 101, POLICY), { submit: false });
+
+    deadlines.filter(({ ms }) => ms === 300_000).at(-1).callback();
+    assert.deepEqual(tell(form, 102, POLICY), { submit: false });
+    assert.deepEqual(timers.map(({ cleared }) => cleared), [true, true]);
 });
 
 test("each site keeps its own session: a login clears only the cookies and requests of its own host", async () => {
@@ -801,11 +995,11 @@ test("each site keeps its own session: a login clears only the cookies and reque
         { name: "MRHSession", domain: "decl.anaf.mfinante.gov.ro", hostOnly: true, path: "/", storeId: "0", secure: true },
         { name: "F5_ST", domain: ".decl.anaf.mfinante.gov.ro", hostOnly: false, path: "/WAS6DUS", storeId: "0" },
     ];
-    const replies = [answered(), { status: 200, url: `${DECL_HOME}my.policy`, arrayBuffer: async () => new ArrayBuffer(0) }];
-    const { send, removedCookies, cookieQueries } = loadBackground(() => replies.shift(), { cookies });
+    const { impl } = portal({ certificate: false });
+    const { send, removedCookies, cookieQueries } = loadBackground((url, ...rest) => (url === ANAF_URL ? answered() : impl(url, ...rest)), { cookies });
 
     assert.equal((await send({ type: "fetch", url: ANAF_URL })).ok, true);
-    assert.deepEqual(await send(upload()), { ok: false, error: "session_lost" });
+    assert.deepEqual(await send(upload()), { ok: false, error: "certificate_required" });
 
     assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, "SPV is still alive");
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "cleared" });
@@ -816,7 +1010,7 @@ test("each site keeps its own session: a login clears only the cookies and reque
     ]);
 
     // A successful upload keeps the portal's session at the next login.
-    const live = loadBackground(respond(200, RECEIPT, DECL_URL), { cookies });
+    const live = loadBackground(portal({ session: true }).impl, { cookies });
     await live.send(upload());
     assert.deepEqual(await live.send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
 });
@@ -828,12 +1022,13 @@ test("a login on the portal cancels the uploads stuck on it but not the SPV fetc
     const uploads = Array.from({ length: 5 }, () => send(upload()));
 
     await settle();
-    assert.deepEqual(fetchCalls.map(({ url }) => url), [...Array(4).fill(ANAF_URL), ...Array(4).fill(DECL_URL)]);
+    assert.deepEqual(fetchCalls.map(({ url }) => url), [...Array(4).fill(ANAF_URL), ...Array(4).fill(DECL_HOME)]);
 
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "cleared" });
     for (const reply of await Promise.all(uploads)) {
         assert.deepEqual(reply, { ok: false, error: "cancelled" });
     }
+    assert.equal(uploadsSent(fetchCalls), 0);
 
     let fetchesSettled = false;
     Promise.all(fetches).then(() => (fetchesSettled = true));
