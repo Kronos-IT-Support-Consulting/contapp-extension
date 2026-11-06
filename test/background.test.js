@@ -751,24 +751,27 @@ test("upload posts the file as multipart/form-data and answers in fetch's reply 
 
 test("upload only goes under the declaration portal's /WAS6DUS/, and fetch never goes there", async () => {
     const { send, fetchCalls } = loadBackground(unreachable);
+    // The message is the refused URL's origin and path, so a ContApp config pointing elsewhere shows in its logs.
     const forbidden = [
-        undefined, 42, "", "not a url",
-        ANAF_URL,
-        DECL_HOME,
-        POLICY,
-        "https://decl.anaf.mfinante.gov.ro/WAS6DUS",
-        "https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do",
-        "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
-        "https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do",
-        "https://decl.anaf.mfinante.gov.ro@evil.example/WAS6DUS/displayFile.do",
-        "https://user@decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
-        "https://decl.anaf.mfinante.gov.ro/WAS6DUS/../my.policy",
-        "https://decl.anaf.mfinante.gov.ro/WAS6DUS/%2e%2e/my.policy",
-        "https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do",
+        [undefined], [42], [""], ["not a url"], [new String(DECL_URL)],
+        [ANAF_URL, "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje"],
+        [DECL_HOME, DECL_HOME],
+        [`${POLICY}?nonce=abc`, POLICY],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS", "https://decl.anaf.mfinante.gov.ro/WAS6DUS"],
+        ["https://decl.anaf.mfinante.gov.ro/WAS7DUS/displayFile.do?x=1#y", "https://decl.anaf.mfinante.gov.ro/WAS7DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do", "https://decl.anaf.mfinante.gov.ro/was6dus/displayFile.do"],
+        ["http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do", "https://decl.anaf.mfinante.gov.ro.evil.example/WAS6DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro@evil.example/WAS6DUS/displayFile.do", "https://evil.example/WAS6DUS/displayFile.do"],
+        ["https://user@decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/../my.policy", POLICY],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/%2e%2e/my.policy", POLICY],
+        ["https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
     ];
 
-    for (const url of forbidden) {
-        assert.deepEqual(await send(upload({ url })), { ok: false, error: "forbidden_url" }, String(url));
+    for (const [url, message] of forbidden) {
+        const expected = { ok: false, error: "forbidden_url", ...(message && { message }) };
+        assert.deepEqual(await send(upload({ url })), expected, String(url));
     }
     assert.deepEqual(await send({ type: "fetch", url: DECL_URL }), { ok: false, error: "forbidden_url" });
     assert.equal(fetchCalls.length, 0);
@@ -810,8 +813,9 @@ test("without a known live session the upload logs in silently first, and sends 
         ["no certificate for the host yet", portal({ certificate: false }).impl, { ok: false, error: "certificate_required" }, [GET_HOME, POST_POLICY]],
         ["the handshake already wants one", throwing("TypeError", "Failed to fetch"), { ok: false, error: "certificate_required" }, [GET_HOME]],
         ["offline", throwing("TypeError", "Failed to fetch"), { ok: false, error: "network", message: "offline" }, [GET_HOME], { online: false }],
-        ["F5 shows its form again", (url) => landedOn(POLICY), { ok: false, error: "session_lost" }, [GET_HOME, POST_POLICY]],
-        ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/"), { ok: false, error: "session_lost" }, [GET_HOME]],
+        ["F5 shows its form again", () => landedOn(`${POLICY}?nonce=1`), { ok: false, error: "session_lost", message: POLICY }, [GET_HOME, POST_POLICY]],
+        ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/?a=b"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/" }, [GET_HOME]],
+        ["the portal moved", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}WAS7DUS/`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/` }, [GET_HOME, POST_POLICY]],
         ["the gateway fails", throwing("Error", "boom"), { ok: false, error: "network", message: "boom" }, [GET_HOME]],
     ];
 
@@ -845,7 +849,7 @@ test("an upload F5 bounced to its login page is resent exactly once after a sile
 
     // Bounced again after the re-login: not a third time.
     const again = loadBackground(portal({ session: true, upload: () => landedOn(POLICY) }).impl);
-    assert.deepEqual(await again.send(upload()), { ok: false, error: "session_lost" });
+    assert.deepEqual(await again.send(upload()), { ok: false, error: "session_lost", message: POLICY });
     assert.equal(uploadsSent(again.fetchCalls), 1, "the silent login came first, so a bounce is final");
 
     // The re-login after a bounce cannot find a certificate: the page shows its login prompt.
@@ -864,8 +868,9 @@ test("an upload that may have reached the portal is never resent", async () => {
         ["certificate", throwing("TypeError", "Failed to fetch"), { ok: false, error: "certificate_required" }],
         ["network", throwing("Error", "reset"), { ok: false, error: "network", message: "reset" }],
         ["HTTP 500", () => landedOn(DECL_URL, new TextEncoder().encode("err")), { ok: true, status: 500, url: DECL_URL, body: "ZXJy" }],
-        ["landed on the root", () => landedOn(DECL_HOME), { ok: false, error: "session_lost" }],
-        ["landed over http", () => landedOn("http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"), { ok: false, error: "session_lost" }],
+        ["landed on the root", () => landedOn(`${DECL_HOME}?q`), { ok: false, error: "session_lost", message: DECL_HOME }],
+        ["landed over http", () => landedOn("http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do" }],
+        ["the portal moved", () => landedOn(`${DECL_HOME}WAS7DUS/displayFile.do`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/displayFile.do` }],
     ];
 
     for (const [name, failure, expected] of failures) {
@@ -934,6 +939,7 @@ test("F5's form is submitted once, and only in a portal tab the login opened", a
         ["the SPV login tab", form, 102, POLICY],
         ["another extension", form, 101, POLICY, "other-extension"],
         ["not F5's form", form, 101, DECL_LANDING],
+        ["the portal moved", form, 101, `${DECL_HOME}WAS7DUS/`],
         ["a lookalike host", form, 101, "https://decl.anaf.mfinante.gov.ro.evil.example/my.policy"],
         ["an unknown message", { type: "fetch" }, 101, POLICY],
     ];
@@ -954,6 +960,7 @@ test("the login tab closes once it reaches the portal, only if it is ours, and t
     tell(landed, 55, DECL_LANDING);
     tell(landed, 101, POLICY);
     tell(landed, 101, "http://decl.anaf.mfinante.gov.ro/WAS6DUS/");
+    tell(landed, 101, `${DECL_HOME}WAS7DUS/`); // the portal moved: not closed, watched until the 5-minute cap
     assert.deepEqual(removedTabs, []);
 
     tell(landed, 101, `${DECL_LANDING}index.jsp`);

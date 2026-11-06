@@ -20,6 +20,8 @@ All notable changes to this project are documented here. The format is based on
 - The portal's login tab submits F5's certificate form by itself and closes once the portal is reached, only in tabs
   the extension opened (new content script `decl-login.js` on `https://decl.anaf.mfinante.gov.ro/my.policy*` and
   `/WAS6DUS/*`). Privacy policy and store texts describe both.
+- An upload's `session_lost` (and a failed silent login) carries the URL ANAF ended on in `message`, and an upload's
+  `forbidden_url` the refused URL, both without the query, so ContApp can tell when the portal moves.
 - `build.sh` also writes `dist/chrome-dev` and `dist/firefox-dev` ("ContApp SPV (dev)"), which keep the local
   `contapp.test` hosts for testing against a local ContApp; CI attaches their zips, releases never publish them.
 

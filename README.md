@@ -125,6 +125,12 @@ the declaration. This silent login runs:
 
 The page sees only the final reply, in the same shapes as before.
 
+So that ContApp can log where the portal sends it (and notice ANAF moving it), the declaration paths fill the optional
+`message`: an upload's `session_lost`, including after the resend, and a silent login that ends outside `/WAS6DUS/`
+carry the final URL, and an upload's `forbidden_url` the refused URL. Both are scheme, host and path only; the query is
+dropped, since F5 puts its nonces there. A `forbidden_url` for a value that is not a URL string has no `message`. SPV
+replies are unchanged.
+
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure while the browser is online (offline it is `network` with the message `offline`). The page

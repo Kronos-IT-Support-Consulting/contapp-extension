@@ -16,6 +16,8 @@ const DECL = site({
     api: "https://decl.anaf.mfinante.gov.ro/WAS6DUS/",
     home: "https://decl.anaf.mfinante.gov.ro/",
     policy: "https://decl.anaf.mfinante.gov.ro/my.policy",
+    // ContApp logs where a failed request ended, to notice the portal moving.
+    reportsLanding: true,
     cookieDomain: "decl.anaf.mfinante.gov.ro",
     cookieOrigins: ["*://decl.anaf.mfinante.gov.ro/*"],
     // The portal answers an upload with its own HTML page; only the final URL tells it from the gateway's.
@@ -76,6 +78,24 @@ function allowedUrl(url, prefix) {
     }
 
     return href.startsWith(prefix) ? href : null;
+}
+
+// Scheme, host and path, for a `message`: the query is left out, since F5 puts its nonces there.
+function withoutQuery(url) {
+    try {
+        const { origin, pathname } = new URL(url);
+
+        return origin + pathname;
+    } catch {
+        return undefined;
+    }
+}
+
+// A lost session, saying where the site's requests ended when it reports that.
+function sessionLost(target, url) {
+    const landing = target.reportsLanding ? withoutQuery(url) : undefined;
+
+    return { ok: false, error: SESSION_LOST, ...(landing && { message: landing }) };
 }
 
 // Whether the URL is F5's login page, minus its query.
@@ -234,7 +254,7 @@ async function fetchBody(target, url, init, signal, onHeaders) {
     if (!allowedUrl(response.url, target.api)) {
         discard(response);
 
-        return { ok: false, error: SESSION_LOST, ...(isPolicy(target, response.url) && { bounced: true }) };
+        return { ...sessionLost(target, response.url), ...(isPolicy(target, response.url) && { bounced: true }) };
     }
 
     try {
@@ -275,7 +295,7 @@ async function reauthenticate(target, signal) {
     }
 
     if (!isPolicy(target, start.response.url)) {
-        return { ok: false, error: SESSION_LOST };
+        return sessionLost(target, start.response.url);
     }
 
     const login = await request(target.policy, { method: "POST", body: new URLSearchParams({ vhost: "standard" }) }, signal);
@@ -286,7 +306,7 @@ async function reauthenticate(target, signal) {
 
     discard(login.response);
 
-    return allowedUrl(login.response.url, target.api) ? { ok: true } : { ok: false, error: SESSION_LOST };
+    return allowedUrl(login.response.url, target.api) ? { ok: true } : sessionLost(target, login.response.url);
 }
 
 // `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every request
@@ -545,7 +565,9 @@ async function handle(message, controller, sender) {
         case "upload": {
             const url = allowedUrl(message.url, DECL.api);
 
-            return url ? proxyUpload(url, message, controller) : forbidden;
+            const refused = typeof message.url === "string" ? withoutQuery(message.url) : undefined;
+
+            return url ? proxyUpload(url, message, controller) : { ...forbidden, ...(refused && { message: refused }) };
         }
         case "login": {
             const login = loginTarget(message.url);
