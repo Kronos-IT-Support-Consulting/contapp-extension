@@ -20,6 +20,14 @@
             ],
             "js": ["content.js"],
             "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://decl.anaf.mfinante.gov.ro/my.policy*",
+                "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*"
+            ],
+            "js": ["decl-login.js"],
+            "run_at": "document_idle"
         }
     ],
     "icons": {

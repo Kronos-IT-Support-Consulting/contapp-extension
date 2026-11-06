@@ -25,6 +25,7 @@ See [PRIVACY.md](PRIVACY.md).
 | `manifest.json` | Manifest V3, Chrome/Edge shaped. Its `version` is stamped from the release tag by the workflow; the `1.0.0` in the repository only matters for load-unpacked development. |
 | `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
+| `decl-login.js` | Injected into the declaration portal's F5 form and pages; in a login tab the extension opened, submits the form once and reports when the portal is reached, so the worker closes the tab. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
 | `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`), plus the `-dev` builds that also run on the local `contapp.test` hosts. |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
@@ -110,6 +111,20 @@ Fields that are not strings, an empty `field`, or a `body` that is not base64 an
 send nothing. An upload is not idempotent: after `cancelled` or `timeout` ANAF may still have registered the
 declaration, so check before sending it again rather than retrying blindly.
 
+An upload logs in to the portal by itself when it can, the way the F5 page would: `GET https://decl.anaf.mfinante.gov.ro/`
+(which ends on `/my.policy` without a session) and `POST /my.policy` with `vhost=standard`, where the gateway asks for
+the client certificate. Chrome answers that without a picker only when a certificate was already chosen for the host
+in this browser session; otherwise the request fails and the upload answers `certificate_required` without sending
+the declaration. This silent login runs:
+
+- before the upload, when the worker does not know the portal's session to be alive (the last request to it failed,
+  or the worker restarted since);
+- after the upload, when the session was thought alive but F5 bounced the POST to `/my.policy`, which means it never
+  reached the portal. The declaration is then sent again, once. Nothing else is ever resent: a timeout, a cancel, a
+  network error, an HTTP error or a landing anywhere but `/my.policy` may have filed the declaration.
+
+The page sees only the final reply, in the same shapes as before.
+
 - `certificate_required`: `fetch` threw a `TypeError`. That is what Chrome returns when ANAF demands a client
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure while the browser is online (offline it is `network` with the message `offline`). The page
@@ -146,6 +161,13 @@ At most four requests per ANAF host use the network at once; the rest wait their
 per host, so two stay free for the login tab even when every request is stuck on a handshake. `webserviced.anaf.ro`
 and `decl.anaf.mfinante.gov.ro` have separate F5 gateways, so each keeps its own slots and session: a login resets
 and cancels only the host it opens.
+
+A `login` on the portal opens its tab next to the ContApp tab (`openerTabId`), so closing it brings ContApp back and
+the page's `visibilitychange` handler resumes. In that tab, and only in tabs a `login` opened, `decl-login.js` submits
+F5's *Prezentare certificat* form once (a picker the user cancels lands on the form again and is left for a click),
+and once the tab reaches `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` the worker closes it and counts the portal's
+session as alive. The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it
+restarted, the user clicks the button and closes the tab by hand. The portal opened any other way is left alone.
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 

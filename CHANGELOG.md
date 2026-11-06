@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format is based on
   host permission `*://decl.anaf.mfinante.gov.ro/*`.
 - Privacy policy and store texts cover filing declarations: the signed PDF sent to ANAF's declaration portal, the
   portal's answer handed to the ContApp page, the new host permission and the per-host cookie reset.
+- Uploads log in to the declaration portal silently when the browser already has a certificate for it (`GET /`,
+  then F5's `POST /my.policy` with `vhost=standard`): before an upload when the portal's session is not known to be
+  alive, and once after an upload F5 bounced to `/my.policy`, which is then resent once. No other failure is resent.
+- The portal's login tab submits F5's certificate form by itself and closes once the portal is reached, only in tabs
+  the extension opened (new content script `decl-login.js` on `https://decl.anaf.mfinante.gov.ro/my.policy*` and
+  `/WAS6DUS/*`). Privacy policy and store texts describe both.
 - `build.sh` also writes `dist/chrome-dev` and `dist/firefox-dev` ("ContApp SPV (dev)"), which keep the local
   `contapp.test` hosts for testing against a local ContApp; CI attaches their zips, releases never publish them.
 
