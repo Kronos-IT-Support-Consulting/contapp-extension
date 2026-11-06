@@ -39,8 +39,8 @@ const TIMED_OUT = "timeout";
 const CANCELLED = "cancelled";
 const SESSION_LOST = "session_lost";
 const PORT_NAME = "contapp-spv";
-// How long a login tab on the declaration portal is watched, so its F5 form can be submitted and the tab closed once
-// the portal is reached; the worker is kept alive for it, since the tab is only known in memory.
+// How long a login tab is watched, so the declaration portal's F5 form can be submitted and the tab closed once it
+// reaches the site's answer; the worker is kept alive for it, since the tab is only known in memory.
 const LOGIN_TAB_MS = 5 * 60_000;
 // Chrome opens at most six connections per host. Keeping two free lets the login tab through while
 // background fetches are stuck on a handshake; the rest wait for a slot.
@@ -490,16 +490,16 @@ async function resetLostSession(target) {
     }
 }
 
-// Tabs `login` opened on the declaration portal, by id: whether decl-login.js already submitted F5's form there, and
-// how to stop watching. One submit per tab: a certificate picker the user cancels lands on the form again, which must
-// not loop.
+// Tabs `login` opened, by id: the site, whether login-tab.js already submitted F5's form there, and how to stop
+// watching. One submit per tab: a certificate picker the user cancels lands on the form again, which must not loop.
 const loginTabs = new Map();
 
-function watchLoginTab(tabId) {
+function watchLoginTab(tabId, target) {
     const stopKeepAlive = keepAlive();
     const expiry = setTimeout(() => forgetLoginTab(tabId), LOGIN_TAB_MS);
 
     loginTabs.set(tabId, {
+        target,
         submitted: false,
         stop: () => {
             clearTimeout(expiry);
@@ -516,18 +516,18 @@ function forgetLoginTab(tabId) {
 // The tab opens next to the ContApp tab that asked, so closing it brings that tab back and the page resumes.
 async function openLogin({ target, href }, opener) {
     const outcome = await resetLostSession(target);
-    const watched = Boolean(target.policy);
-    const tab = await chrome.tabs.create({ url: href, ...(watched && opener !== undefined && { openerTabId: opener }) });
+    const tab = await chrome.tabs.create({ url: href, ...(opener !== undefined && { openerTabId: opener }) });
 
-    if (watched && tab?.id !== undefined) {
-        watchLoginTab(tab.id);
+    if (tab?.id !== undefined) {
+        watchLoginTab(tab.id, target);
     }
 
     return { ok: true, ...outcome };
 }
 
-// decl-login.js asks from F5's form whether to submit it, and reports when the tab reached the portal. Only a tab
-// `login` opened gets a yes or is closed; the portal opened by hand is left alone.
+// login-tab.js asks from F5's form whether to submit it (only the declaration portal has one to submit), and reports
+// when the tab reached the site's answer. Only a tab `login` opened gets a yes or is closed; ANAF opened by hand is
+// left alone.
 function onLoginTabMessage(message, sender) {
     const tabId = sender.tab?.id;
     const tab = sender.id === chrome.runtime.id ? loginTabs.get(tabId) : undefined;
@@ -536,15 +536,15 @@ function onLoginTabMessage(message, sender) {
         return { submit: false };
     }
 
-    if (message?.type === "decl-login-form" && isPolicy(DECL, sender.url) && !tab.submitted) {
+    if (message?.type === "login-form" && isPolicy(tab.target, sender.url) && !tab.submitted) {
         tab.submitted = true;
 
         return { submit: true };
     }
 
-    if (message?.type === "decl-login-landed" && allowedUrl(sender.url, DECL.api)) {
+    if (message?.type === "login-landed" && allowedUrl(sender.url, tab.target.api)) {
         forgetLoginTab(tabId);
-        DECL.sessionAlive = true;
+        tab.target.sessionAlive = true;
         chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp SPV could not close the login tab", error));
     }
 

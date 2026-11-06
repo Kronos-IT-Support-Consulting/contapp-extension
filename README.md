@@ -25,7 +25,7 @@ See [PRIVACY.md](PRIVACY.md).
 | `manifest.json` | Manifest V3, Chrome/Edge shaped. Its `version` is stamped from the release tag by the workflow; the `1.0.0` in the repository only matters for load-unpacked development. |
 | `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
-| `decl-login.js` | Injected into the declaration portal's F5 form and pages; in a login tab the extension opened, submits the form once and reports when the portal is reached, so the worker closes the tab. |
+| `login-tab.js` | Injected into the declaration portal's F5 form and pages and into SPV REST answers; in a login tab the extension opened, submits the portal's F5 form once and reports when the login ended, so the worker closes the tab. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
 | `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`), plus the `-dev` builds that also run on the local `contapp.test` hosts. |
 | `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
@@ -168,12 +168,19 @@ per host, so two stay free for the login tab even when every request is stuck on
 and `decl.anaf.mfinante.gov.ro` have separate F5 gateways, so each keeps its own slots and session: a login resets
 and cancels only the host it opens.
 
-A `login` on the portal opens its tab next to the ContApp tab (`openerTabId`), so closing it brings ContApp back and
-the page's `visibilitychange` handler resumes. In that tab, and only in tabs a `login` opened, `decl-login.js` submits
-F5's *Prezentare certificat* form once (a picker the user cancels lands on the form again and is left for a click),
-and once the tab reaches `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` the worker closes it and counts the portal's
-session as alive. The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it
-restarted, the user clicks the button and closes the tab by hand. The portal opened any other way is left alone.
+A `login` opens its tab next to the ContApp tab (`openerTabId`), so closing it brings ContApp back and the page's
+`visibilitychange` handler resumes. In that tab, and only in tabs a `login` opened, `login-tab.js`:
+
+- on the portal, submits F5's *Prezentare certificat* form once (a picker the user cancels lands on the form again and
+  is left for a click). SPV's login shows no such form: F5's `/my.policy` there redirects by itself;
+- once the tab reaches `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`, or an SPV answer under
+  `https://webserviced.anaf.ro/SPVWS2/rest/` served as JSON or PDF (not F5's `/my.policy`, `/vdesk/…` or `/public/…`
+  pages, nor its HTML page under the prefix), tells the worker, which closes the tab and counts that host's session as
+  alive.
+
+The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it restarted, the user
+clicks the button and closes the tab by hand. ANAF opened any other way is left alone. Detecting the SPV answer needs
+the content script: the tab's URL alone cannot tell a JSON answer from the gateway's HTML page under the same prefix.
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 
@@ -228,7 +235,8 @@ way to reach SPV, so any change to the message shapes above must ship in both re
    `webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60`. The browser shows the certificate picker;
    choose the SPV certificate, then the token asks for its PIN. The tab ends on a raw JSON page (either
    a message list or `{"eroare":…}`). That JSON *is* the success: the browser now holds the ANAF
-   session cookie and remembers the certificate for this host. Close the tab or leave it, both work.
+   session cookie and remembers the certificate for this host. The extension closes the tab by itself and
+   ContApp comes back.
    If the tab shows an F5 `/my.policy` page instead, wait for it to redirect; if it stays blank, reload it once.
 4. **Verify again** — back in ContApp, click **Verifică**. A success toast *Certificat valid pentru CNP …,
    cu acces la N CUI-uri* appears and the page fills in *CNP titular*, *Serie certificat* and *CUI-uri acces*.

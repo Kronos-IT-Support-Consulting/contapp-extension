@@ -12,7 +12,7 @@ targets=(chrome firefox chrome-dev firefox-dev)
 rm -rf dist
 for target in "${targets[@]}"; do
     mkdir -p "dist/$target/icons"
-    cp background.js content.js decl-login.js "dist/$target/"
+    cp background.js content.js login-tab.js "dist/$target/"
     # Only the PNGs the manifest references; the SVG sources stay in the repository.
     cp icons/*.png "dist/$target/icons/"
 done

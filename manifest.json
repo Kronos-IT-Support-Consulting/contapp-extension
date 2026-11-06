@@ -24,9 +24,10 @@
         {
             "matches": [
                 "https://decl.anaf.mfinante.gov.ro/my.policy*",
-                "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*"
+                "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*",
+                "https://webserviced.anaf.ro/SPVWS2/rest/*"
             ],
-            "js": ["decl-login.js"],
+            "js": ["login-tab.js"],
             "run_at": "document_idle"
         }
     ],
