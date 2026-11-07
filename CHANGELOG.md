@@ -8,28 +8,94 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
-- `{type:"upload", url, field, filename, contentType, body}` POSTs a base64 file as `multipart/form-data` to ANAF's
-  declaration portal (`https://decl.anaf.mfinante.gov.ro/WAS6DUS/`) with the browser's certificate, and answers like
-  `fetch`. `login` also opens `https://decl.anaf.mfinante.gov.ro/`, resetting that host's session on its own. Adds the
-  host permission `*://decl.anaf.mfinante.gov.ro/*`.
-- Privacy policy and store texts cover filing declarations: the signed PDF sent to ANAF's declaration portal, the
-  portal's answer handed to the ContApp page, the new host permission and the per-host cookie reset.
+- A request that F5 ends on its hangup page (`/vdesk/hangup.php3`, *Certificatul nu a fost prezentat*) answers the new
+  error `certificate_refused` instead of `session_lost`. The browser sent no client certificate: the certificate's
+  app was not running or the token was unplugged when ANAF asked (Chrome then sends none without a picker), or the
+  picker was closed. Chrome remembers that until it quits, so a login cannot help and the page should say so.
+- A login tab that lands on that hangup page closes, and the session stays lost.
+- Tests cover slot accounting after a hand-off, the in-flight set, foreign port names, the login tab's expiry timer,
+  the oversized message and Chrome's `browser` namespace.
+
+### Changed
+
+- The extension is called **ContApp** instead of *ContApp SPV*, since it does more than read SPV: the manifest
+  `name` (the dev builds are "ContApp (dev)") and `description` (now naming SPV messages and declaration filing),
+  the log prefixes, README, privacy and security policies and store texts. The icons drop the "SPV" badge and show
+  the ContApp mark alone; the store icon and the 440×280 promo tile are redrawn to match. The gecko ids, the page
+  protocol (`contapp-spv` channel, `data-spv-extension`), the repository and the release zip names are unchanged.
+- `login` only opens the two addresses ContApp logs in with: `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje`
+  (any query) and exactly `https://decl.anaf.mfinante.gov.ro/`; other URLs under the two prefixes answer
+  `forbidden_url`.
+
+### Fixed
+
+- Firefox: every request answered `forbidden_origin` since 2.1.0. Firefox lists content scripts in `getManifest()` as
+  `moz-extension://` URLs, so the check for the ContApp hosts found no `content.js` entry and refused every page.
+- Firefox: the SPV login tab now closes by itself. Firefox runs no content script in its JSON viewer, so once the tab
+  has loaded an address under the SPV REST API the worker asks for it itself and closes the tab on an SPV answer.
+- The login's cookie reset works again on Chrome and Edge 148 and newer, which also expose a `browser` namespace; the
+  extension used it to tell Firefox apart and sent Firefox's cookie query to Chrome, so every login answered
+  `reset: "failed"` and cleared nothing (since 2.2.0; Firefox is now detected by `runtime.getBrowserInfo`).
+- The login tab opens in the ContApp tab's own window; before, a ContApp tab in a window that was not the last focused
+  one made `login` fail with `network` after the cookies were already cleared.
+- An upload whose base64 body exceeds the browser's 64 MiB message limit (a PDF over about 48 MiB) answers `network`
+  with a message instead of never answering.
+
+### Security
+
+- `fetch`, `upload` and `login` refuse a path carrying an encoded dot, slash or backslash or a `;` path parameter
+  (`..;/`, `..%2F`, `%2E%2E%2F`, `..%5C`), which the URL parser leaves in place and a server might resolve outside the
+  allowed prefix.
+- Release workflow: the release job builds and hashes the zips before `npm ci`, so no dependency code runs before the
+  digests; CI syntax-checks all three scripts.
+
+## [2.2.0] — 2026-11-06
+
+### Added
+
+- The SPV login tab opens next to the ContApp tab and closes by itself once it shows an SPV REST answer (JSON or PDF),
+  only in tabs the extension opened; `login-tab.js` also runs on `https://webserviced.anaf.ro/SPVWS2/rest/*` to tell
+  that answer from F5's HTML page. SPV's login has no form to submit. Privacy policy and store texts describe it.
+
+### Changed
+
+- The portal's content script `decl-login.js` is renamed `login-tab.js`, since it now serves both ANAF hosts.
+
+## [2.1.0] — 2026-11-06
+
+### Added
+
 - Uploads log in to the declaration portal silently when the browser already has a certificate for it (`GET /`,
   then F5's `POST /my.policy` with `vhost=standard`): before an upload when the portal's session is not known to be
   alive, and once after an upload F5 bounced to `/my.policy`, which is then resent once. No other failure is resent.
 - The portal's login tab submits F5's certificate form by itself and closes once the portal is reached, only in tabs
   the extension opened (new content script `login-tab.js` on `https://decl.anaf.mfinante.gov.ro/my.policy*` and
   `/WAS6DUS/*`). Privacy policy and store texts describe both.
-- The SPV login tab opens next to the ContApp tab and closes by itself once it shows an SPV REST answer (JSON or PDF),
-  only in tabs the extension opened; `login-tab.js` also runs on `https://webserviced.anaf.ro/SPVWS2/rest/*` to tell
-  that answer from F5's HTML page. SPV's login has no form to submit. Privacy policy and store texts describe it.
 - An upload's `session_lost` (and a failed silent login) carries the URL ANAF ended on in `message`, and an upload's
   `forbidden_url` the refused URL, both without the query, so ContApp can tell when the portal moves.
+
+## [2.0.0] — 2026-11-06
+
+### Added
+
+- `{type:"upload", url, field, filename, contentType, body}` POSTs a base64 file as `multipart/form-data` to ANAF's
+  declaration portal (`https://decl.anaf.mfinante.gov.ro/WAS6DUS/`) with the browser's certificate, and answers like
+  `fetch`. `login` also opens `https://decl.anaf.mfinante.gov.ro/`, resetting that host's session on its own. Adds the
+  host permission `*://decl.anaf.mfinante.gov.ro/*`.
+- Privacy policy and store texts cover filing declarations: the signed PDF sent to ANAF's declaration portal, the
+  portal's answer handed to the ContApp page, the new host permission and the per-host cookie reset.
 - `build.sh` also writes `dist/chrome-dev` and `dist/firefox-dev` ("ContApp SPV (dev)"), which keep the local
   `contapp.test` hosts for testing against a local ContApp; CI attaches their zips, releases never publish them.
 
+## [1.5.0] — 2026-10-16
+
 ### Changed
 
+- The extension is called **ContApp** instead of *ContApp SPV*, since it does more than read SPV: the manifest
+  `name` (the dev builds are "ContApp (dev)") and `description` (now naming SPV messages and declaration filing),
+  the log prefixes, README, privacy and security policies and store texts. The icons drop the "SPV" badge and show
+  the ContApp mark alone; the store icon and the 440×280 promo tile are redrawn to match. The gecko ids, the page
+  protocol (`contapp-spv` channel, `data-spv-extension`), the repository and the release zip names are unchanged.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or
@@ -39,7 +105,6 @@ All notable changes to this project are documented here. The format is based on
 - A ContApp tab left open across an extension update or reload answers `extension_reloaded` and detaches, instead of
   `extension` on every request.
 - A failed fetch while the browser is offline answers `network` (`offline`) instead of `certificate_required`.
-
 - A fetch cancelled by a login answers `cancelled` instead of `network` with the message
   `cancelled by the ANAF login`, and a fetch without the ANAF host permission answers `permission` instead of
   `network`, so the page can tell them apart without matching text.
@@ -157,7 +222,11 @@ First standalone release, moved out of the ContApp application repository.
   `forbidden_url`.
 - Chrome/Edge and Firefox builds, zipped by `build.sh` and attached to each GitHub release.
 
-[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.5.0...v2.0.0
+[1.5.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.1.0...v1.2.0

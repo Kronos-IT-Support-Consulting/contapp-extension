@@ -27,7 +27,9 @@ const cookieUrl = ({ domain, secure }) => `${secure ? "https" : "http"}://${doma
 
 // Runs background.js in its own realm with chrome.* stubbed. `fetchImpl(url, options, context)` plays fetch;
 // `context` lets a test throw the realm's own error classes, which is what instanceof checks in the worker see.
-// The cookies API only sees what `hosts`, the manifest's host permissions by default, allows.
+// The cookies API only sees what `hosts`, the manifest's host permissions by default, allows. Both browsers expose
+// `browser` (Chrome since 148, as a second namespace object over the same APIs); only Firefox has
+// runtime.getBrowserInfo, and only Firefox accepts `firstPartyDomain` on the cookies API.
 function loadBackground(fetchImpl, {
     granted = true, createTab, cookies = [], getAllCookies, firefox = false, hosts = manifest.host_permissions, online = true,
 } = {}) {
@@ -48,6 +50,61 @@ function loadBackground(fetchImpl, {
     let onConnect;
     let onMessage;
     let onTabRemoved;
+    let onTabUpdated;
+
+    // Chrome's error text, for a cookie query shaped for Firefox.
+    const unexpected = (method, details) => {
+        if (!firefox && "firstPartyDomain" in details) {
+            throw new Error(`Error in invocation of cookies.${method}(object details, optional function callback): Error at parameter 'details': Unexpected property: 'firstPartyDomain'.`);
+        }
+    };
+    const chromeApi = {
+        runtime: {
+            id: EXTENSION_ID,
+            // Firefox lists the content scripts as moz-extension:// URLs, Chrome as written in the manifest.
+            getManifest: () => ({
+                version: "9.8.7",
+                content_scripts: firefox
+                    ? manifest.content_scripts.map((entry) => ({ ...entry, js: entry.js.map((file) => `moz-extension://0d1f/${file}`) }))
+                    : manifest.content_scripts,
+            }),
+            getPlatformInfo: async () => keepAlives++,
+            onConnect: { addListener: (callback) => (onConnect = callback) },
+            onMessage: { addListener: (callback) => (onMessage = callback) },
+            ...(firefox && { getBrowserInfo: async () => ({ name: "Firefox", vendor: "Mozilla", version: "140.0", buildID: "" }) }),
+        },
+        permissions: { contains: async () => granted },
+        tabs: {
+            create: createTab ?? (async (tab) => {
+                events.push("tab");
+                createdTabs.push(structuredClone(tab));
+
+                return { ...tab, id: ++tabIds };
+            }),
+            remove: async (tabId) => removedTabs.push(tabId),
+            onRemoved: { addListener: (callback) => (onTabRemoved = callback) },
+            onUpdated: { addListener: (callback) => (onTabUpdated = callback) },
+        },
+        cookies: {
+            getAll: async (query) => {
+                unexpected("getAll", query);
+                cookieQueries.push(structuredClone(query));
+
+                const all = getAllCookies ? await getAllCookies(query) : structuredClone(cookies);
+
+                return all.filter((cookie) => permitted(hosts, cookieUrl(cookie)));
+            },
+            remove: async (details) => {
+                unexpected("remove", details);
+                if (!permitted(hosts, details.url)) {
+                    throw new Error(`No host permissions for cookies at url: "${details.url}".`);
+                }
+
+                events.push("cookie");
+                removedCookies.push(structuredClone(details));
+            },
+        },
+    };
 
     const context = vm.createContext({
         URL,
@@ -73,58 +130,23 @@ function loadBackground(fetchImpl, {
 
             return fetchImpl(url, options, context);
         },
-        chrome: {
-            runtime: {
-                id: EXTENSION_ID,
-                getManifest: () => ({ version: "9.8.7", content_scripts: manifest.content_scripts }),
-                getPlatformInfo: async () => keepAlives++,
-                onConnect: { addListener: (callback) => (onConnect = callback) },
-                onMessage: { addListener: (callback) => (onMessage = callback) },
-            },
-            permissions: { contains: async () => granted },
-            tabs: {
-                create: createTab ?? (async (tab) => {
-                    events.push("tab");
-                    createdTabs.push(structuredClone(tab));
-
-                    return { ...tab, id: ++tabIds };
-                }),
-                remove: async (tabId) => removedTabs.push(tabId),
-                onRemoved: { addListener: (callback) => (onTabRemoved = callback) },
-            },
-            cookies: {
-                getAll: async (query) => {
-                    cookieQueries.push(structuredClone(query));
-
-                    const all = getAllCookies ? await getAllCookies(query) : structuredClone(cookies);
-
-                    return all.filter((cookie) => permitted(hosts, cookieUrl(cookie)));
-                },
-                remove: async (details) => {
-                    if (!permitted(hosts, details.url)) {
-                        throw new Error(`No host permissions for cookies at url: "${details.url}".`);
-                    }
-
-                    events.push("cookie");
-                    removedCookies.push(structuredClone(details));
-                },
-            },
-        },
-        ...(firefox && { browser: {} }),
+        chrome: chromeApi,
+        browser: { ...chromeApi },
     });
 
     vm.runInContext(source, context);
 
     // Plays the content script: opens a port as `sender`, posts `message` and resolves with the first reply, cloned
-    // out of the vm realm so deepEqual compares plain objects. `close()` disconnects the port the way a cancel does.
-    const connect = (message, sender = CONTAPP) => {
+    // out of the vm realm so deepEqual compares plain objects. `close()` disconnects the port the way a cancel does;
+    // `handled()` says whether the worker listens to the port at all.
+    const connect = (message, sender = CONTAPP, { name = "contapp-spv" } = {}) => {
         const listeners = { message: [], disconnect: [] };
         let disconnected = false;
         let close;
         const reply = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("the worker never answered")), 1000).unref();
             const port = {
-                name: "contapp-spv",
+                name,
                 sender,
                 postMessage: (response) => {
                     assert.equal(disconnected, false, "the worker must not post to a closed port");
@@ -148,8 +170,11 @@ function loadBackground(fetchImpl, {
             }
         });
 
-        return { reply, close, disconnected: () => disconnected };
+        return { reply, close, disconnected: () => disconnected, handled: () => listeners.message.length > 0 };
     };
+    // A site's bookkeeping, which must be back to nothing once its requests have settled.
+    const state = (site) => structuredClone(vm.runInContext(`({ inFlight: ${site}.inFlight.size, running: ${site}.running, waiting: ${site}.waiting.length })`, context));
+    const IDLE = { inFlight: 0, running: 0, waiting: 0 };
     const send = (message, sender) => connect(message, sender).reply;
     // Plays login-tab.js: a one-off runtime message from a tab, answered through sendResponse.
     const tell = (message, tabId, url, id = EXTENSION_ID) => {
@@ -160,8 +185,8 @@ function loadBackground(fetchImpl, {
     };
 
     return {
-        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
-        keepAlives: () => keepAlives, debug, warnings,
+        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), updateTab: (tabId, changeInfo, tab) => onTabUpdated(tabId, changeInfo, tab), removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        keepAlives: () => keepAlives, debug, warnings, state, IDLE,
     };
 }
 
@@ -180,7 +205,7 @@ test("ping answers the manifest version", async () => {
 
 test("the hosts the worker fetches from are the ones the manifest asks permission for", () => {
     const listener = { addListener() {} };
-    const context = vm.createContext({ chrome: { runtime: { onConnect: listener, onMessage: listener }, tabs: { onRemoved: listener } }, URL });
+    const context = vm.createContext({ chrome: { runtime: { onConnect: listener, onMessage: listener }, tabs: { onRemoved: listener, onUpdated: listener } }, URL });
     vm.runInContext(source, context);
 
     const sites = structuredClone(vm.runInContext("SITES.map(({ host, api, permission, cookieOrigins }) => ({ host, api, permission, cookieOrigins }))", context));
@@ -200,7 +225,9 @@ test("the hosts the worker fetches from are the ones the manifest asks permissio
         [
             "https://decl.anaf.mfinante.gov.ro/my.policy*",
             "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*",
+            "https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*",
             "https://webserviced.anaf.ro/SPVWS2/rest/*",
+            "https://webserviced.anaf.ro/vdesk/hangup.php3*",
         ],
         "the login helper runs only on the portal's F5 form and the pages a login ends on",
     );
@@ -226,6 +253,13 @@ test("fetch and login refuse anything that does not resolve under the SPV REST A
         "https://webserviced.anaf.ro/SPVWS2/rest/.%2e/.%2e/admin",
         "https://webserviced.anaf.ro/SPVWS2/rest/..\\..\\admin",
         "https://webserviced.anaf.ro/SPVWS2/rest/x/../../../admin",
+        // The parser leaves these in place; a server may still resolve them (Tomcat strips ";" path parameters).
+        "https://webserviced.anaf.ro/SPVWS2/rest/..;/admin",
+        "https://webserviced.anaf.ro/SPVWS2/rest/..%2Fadmin",
+        "https://webserviced.anaf.ro/SPVWS2/rest/%2E%2E%2Fadmin",
+        "https://webserviced.anaf.ro/SPVWS2/rest/..%5Cadmin",
+        "https://webserviced.anaf.ro/SPVWS2/rest/x;jsessionid=1",
+        "https://webserviced.anaf.ro/SPVWS2/rest/a%2eb",
     ];
 
     for (const url of forbidden) {
@@ -245,14 +279,41 @@ test("fetch and login use the normalised URL", async () => {
         [" https://webserviced.anaf.ro\\SPVWS2/rest/x", "https://webserviced.anaf.ro/SPVWS2/rest/x"],
         ["https://webserviced.anaf.ro/SPVWS2/rest/x/../y", "https://webserviced.anaf.ro/SPVWS2/rest/y"],
         ["https://webserviced.anaf.ro/SPVWS2/rest/a b?x=ü", "https://webserviced.anaf.ro/SPVWS2/rest/a%20b?x=%C3%BC"],
+        // Only the path is checked for escapes: the query carries what the page puts there.
+        ["https://webserviced.anaf.ro/SPVWS2/rest/cerere?tip=100%25&cui=a%2Fb;c=%2e&d=..%5C", "https://webserviced.anaf.ro/SPVWS2/rest/cerere?tip=100%25&cui=a%2Fb;c=%2e&d=..%5C"],
+        ["https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=1#..;/x", "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=1#..;/x"],
     ];
 
     for (const [url, href] of normalised) {
         assert.equal((await send({ type: "fetch", url })).ok, true, url);
-        assert.equal((await send({ type: "login", url })).ok, true, url);
         assert.equal(fetchCalls.at(-1).url, href);
+    }
+
+    // login takes the same normalisation, on the one SPV address it opens.
+    const logins = [
+        [ANAF_URL, ANAF_URL],
+        ["https://webserviced.anaf.ro:443/SPVWS2/rest/listaMesaje?zile=7", "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=7"],
+        ["HTTPS://WEBSERVICED.ANAF.RO/SPVWS2/rest/listaMesaje", "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje"],
+        ["https://webserviced.anaf.ro/SPVWS2/rest/x/../listaMesaje#top", "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje#top"],
+    ];
+
+    for (const [url, href] of logins) {
+        assert.equal((await send({ type: "login", url })).ok, true, url);
         assert.deepEqual(createdTabs.at(-1), { url: href });
     }
+
+    // Any other SPV address is fetched on request but never opened in a tab.
+    for (const url of [
+        "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=1",
+        "https://webserviced.anaf.ro/SPVWS2/rest/cerere?tip=D300&cui=1",
+        "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje/x",
+        "https://webserviced.anaf.ro/SPVWS2/rest/listaMesajeX",
+        "https://webserviced.anaf.ro/SPVWS2/rest/",
+    ]) {
+        assert.equal((await send({ type: "fetch", url })).ok, true, url);
+        assert.deepEqual(await send({ type: "login", url }), { ok: false, error: "forbidden_url" }, url);
+    }
+    assert.equal(createdTabs.length, logins.length);
 });
 
 test("fetch returns status, final url and the body as base64, whatever the status or size", async () => {
@@ -310,13 +371,14 @@ test("a body that cannot be read is a network error, even when the stream throws
 
 test("a fetch cut off by the deadline answers timeout, not certificate_required", async () => {
     // A real fetch rejects with the signal's reason once the deadline aborts it.
-    const { send, deadlines } = loadBackground((url, options) => {
+    const { send, deadlines, state, IDLE } = loadBackground((url, options) => {
         deadlines.at(-1).callback();
         throw options.signal.reason;
     });
 
     assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "timeout" });
     assert.deepEqual(deadlines.map(({ ms }) => ms), [90_000]);
+    assert.deepEqual(state("SPV"), IDLE, "a timed-out request is forgotten like any other");
 
     // AbortSignal.timeout's own rejection, in case the deadline is ever built that way.
     const domTimeout = loadBackground(() => {
@@ -374,12 +436,13 @@ test("a body that stalls after the headers times out and frees its slot", async 
 
 test("at most four fetches use the network at once, leaving connections for the login tab", async () => {
     const pending = [];
-    const { send, fetchCalls } = loadBackground(() => new Promise((resolve) => pending.push(resolve)));
+    const { send, fetchCalls, state, IDLE } = loadBackground(() => new Promise((resolve) => pending.push(resolve)));
     const replies = Array.from({ length: 6 }, () => send({ type: "fetch", url: ANAF_URL }));
     const settle = () => new Promise((resolve) => setImmediate(resolve));
 
     await settle();
     assert.equal(fetchCalls.length, 4);
+    assert.deepEqual(state("SPV"), { inFlight: 6, running: 4, waiting: 2 });
 
     pending.shift()(answered());
     await settle();
@@ -393,6 +456,32 @@ test("at most four fetches use the network at once, leaving connections for the 
     assert.equal(fetchCalls.length, 6);
 
     assert.deepEqual((await Promise.all(replies)).map(({ ok }) => ok), [true, true, true, true, true, true]);
+    assert.deepEqual(state("SPV"), IDLE, "nothing is left behind once every request has settled");
+
+    // A handed-over slot stays counted: the next wave is limited like the first, not by what the hand-offs left.
+    const more = Array.from({ length: 6 }, () => send({ type: "fetch", url: ANAF_URL }));
+    await settle();
+    assert.equal(fetchCalls.length, 10, "four more at once, not six");
+
+    while (pending.length) {
+        pending.shift()(answered());
+        await settle();
+    }
+    assert.deepEqual((await Promise.all(more)).map(({ ok }) => ok), Array(6).fill(true));
+    assert.deepEqual(state("SPV"), IDLE);
+});
+
+test("a port under another name is not this extension's bridge: no listener, no answer, no fetch", async () => {
+    const { connect, fetchCalls } = loadBackground(unreachable);
+    const other = connect({ type: "fetch", url: ANAF_URL }, CONTAPP, { name: "other" });
+    const ours = connect({ type: "ping" });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual([other.handled(), other.disconnected()], [false, false], "left alone, not even refused");
+    assert.equal(ours.handled(), true);
+    assert.deepEqual(await ours.reply, { ok: true, version: "9.8.7" });
+    assert.equal(fetchCalls.length, 0);
+    other.close();
 });
 
 test("a body too large for a runtime message is a network error instead of a reply that never arrives", async () => {
@@ -449,6 +538,16 @@ test("login clears every cookie the ANAF host receives, partitioned or on .anaf.
         { url: "https://webserviced.anaf.ro/", name: "CHIPS", storeId: "0", partitionKey: { topLevelSite: "https://contapp.ro" } },
     ]);
     assert.deepEqual(events, ["cookie", "cookie", "cookie", "cookie", "tab"]);
+});
+
+test("on Chrome, which also has a browser namespace since 148, the cookie query carries no firstPartyDomain", async () => {
+    const cookies = [{ name: "MRHSession", domain: "webserviced.anaf.ro", hostOnly: true, path: "/", storeId: "0" }];
+    const { send, removedCookies, cookieQueries, warnings } = loadBackground(unreachable, { cookies });
+
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" });
+    assert.deepEqual(cookieQueries, [{ domain: "anaf.ro", partitionKey: {} }]);
+    assert.deepEqual(removedCookies, [{ url: "https://webserviced.anaf.ro/", name: "MRHSession", storeId: "0" }]);
+    assert.deepEqual(warnings, []);
 });
 
 test("in Firefox the cookie query covers first-party isolation and removal passes the cookie's first-party domain", async () => {
@@ -584,6 +683,13 @@ test("unknown message types and malformed messages are rejected", async () => {
     }
 });
 
+test("in Firefox, which lists content scripts as moz-extension:// URLs, ContApp's hosts may still open a port", async () => {
+    const { send } = loadBackground(respond(200), { firefox: true });
+
+    assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url: "https://contabilitate.contapp.ro/x" }), { ok: true, version: "9.8.7" });
+    assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url: "https://webserviced.anaf.ro/SPVWS2/rest/x" }), { ok: false, error: "forbidden_origin" }, "the login helper's hosts stay refused");
+});
+
 test("only the ContApp hosts the content script runs on may open a port", async () => {
     const { send, fetchCalls } = loadBackground(respond(200));
     const refused = [
@@ -639,6 +745,35 @@ test("a fetch that ends outside the SPV REST API is a lost session, and its body
         assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error: "session_lost" }, url);
         assert.deepEqual([read, cancelled], [false, true], url);
         assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, url);
+    }
+});
+
+test("a fetch F5 ends on its hangup page is a refused certificate, not a lost session", async () => {
+    const hangup = "https://webserviced.anaf.ro/vdesk/hangup.php3";
+    const cases = [
+        [hangup, "certificate_refused"],
+        [`${hangup}?errorcode=1`, "certificate_refused"],
+        ["https://webserviced.anaf.ro/vdesk/other.php3", "session_lost"],
+        ["https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3", "session_lost"],
+        ["http://webserviced.anaf.ro/vdesk/hangup.php3", "session_lost"],
+    ];
+
+    for (const [url, error] of cases) {
+        let read = false;
+        const { send } = loadBackground(async () => ({
+            status: 200,
+            url,
+            body: { cancel: async () => {} },
+            arrayBuffer: async () => {
+                read = true;
+
+                return new ArrayBuffer(0);
+            },
+        }));
+
+        assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error }, url);
+        assert.equal(read, false, url);
+        assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, `${url}: still a lost session`);
     }
 });
 
@@ -770,6 +905,9 @@ test("upload only goes under the declaration portal's /WAS6DUS/, and fetch never
         ["https://user@decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
         ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/../my.policy", POLICY],
         ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/%2e%2e/my.policy", POLICY],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/..;/other/servlet", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/..;/other/servlet"],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/..%2F..%2Fmy.policy", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/..%2F..%2Fmy.policy"],
+        ["https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do;jsessionid=1", "https://decl.anaf.mfinante.gov.ro/WAS6DUS/displayFile.do;jsessionid=1"],
         ["https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do", "https://anaf.mfinante.gov.ro/WAS6DUS/displayFile.do"],
     ];
 
@@ -821,6 +959,7 @@ test("without a known live session the upload logs in silently first, and sends 
         ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/?a=b"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/" }, [GET_HOME]],
         ["the portal moved", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}WAS7DUS/`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/` }, [GET_HOME, POST_POLICY]],
         ["the gateway fails", throwing("Error", "boom"), { ok: false, error: "network", message: "boom" }, [GET_HOME]],
+        ["F5 hangs up: no certificate was sent", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}vdesk/hangup.php3?x`), { ok: false, error: "certificate_refused", message: `${DECL_HOME}vdesk/hangup.php3` }, [GET_HOME, POST_POLICY]],
     ];
 
     for (const [name, impl, expected, calls, options] of cases) {
@@ -903,32 +1042,44 @@ test("an upload that may have reached the portal is never resent", async () => {
     }
 
     // A page that cancels gets cancelled, and nothing is sent again either.
-    const { connect, signals, fetchCalls } = loadBackground(stalled);
+    const { connect, signals, fetchCalls, state, IDLE } = loadBackground(stalled);
     const pending = connect(upload());
     await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(state("DECL"), { inFlight: 1, running: 1, waiting: 0 });
     pending.close();
     assert.equal(signals[0].aborted, true);
     assert.equal(await pending.reply, "closed");
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(fetchCalls.length, 1);
+    assert.deepEqual(state("DECL"), IDLE, "a cancelled upload is forgotten too");
 });
 
 test("login opens the declaration portal's root next to the ContApp tab, and refuses its other pages", async () => {
     const { send, createdTabs } = loadBackground(unreachable);
 
-    for (const url of [DECL_HOME, "https://decl.anaf.mfinante.gov.ro", "HTTPS://DECL.ANAF.MFINANTE.GOV.RO:443/", DECL_URL]) {
+    for (const url of [DECL_HOME, "https://decl.anaf.mfinante.gov.ro", "HTTPS://DECL.ANAF.MFINANTE.GOV.RO:443/"]) {
         assert.equal((await send({ type: "login", url })).ok, true, url);
     }
-    assert.deepEqual(createdTabs.map(({ url }) => url), [DECL_HOME, DECL_HOME, DECL_HOME, DECL_URL]);
+    assert.deepEqual(createdTabs.map(({ url }) => url), [DECL_HOME, DECL_HOME, DECL_HOME]);
 
-    for (const url of [POLICY, `${DECL_HOME}?x`, "http://decl.anaf.mfinante.gov.ro/", "https://anaf.mfinante.gov.ro/"]) {
+    // The upload address and the portal's pages are not opened: only the start page leads through F5's form.
+    for (const url of [DECL_URL, "https://decl.anaf.mfinante.gov.ro/WAS6DUS/", POLICY, `${DECL_HOME}?x`, "http://decl.anaf.mfinante.gov.ro/", "https://anaf.mfinante.gov.ro/"]) {
         assert.deepEqual(await send({ type: "login", url }), { ok: false, error: "forbidden_url" }, url);
     }
 
-    const fromTab = { ...CONTAPP, tab: { id: 7 } };
-    await send({ type: "login", url: DECL_HOME }, fromTab);
-    await send({ type: "login", url: ANAF_URL }, fromTab);
-    assert.deepEqual(createdTabs.slice(-2), [{ url: DECL_HOME, openerTabId: 7 }, { url: ANAF_URL, openerTabId: 7 }]);
+    // The opener's window goes with it: Chrome would otherwise pick the last focused window and refuse the opener.
+    const openers = [
+        [{ id: 7, windowId: 3 }, { openerTabId: 7, windowId: 3 }],
+        [{ id: 7 }, { openerTabId: 7 }],
+        [{ windowId: 3 }, {}],
+        [undefined, {}],
+    ];
+    for (const [tab, expected] of openers) {
+        const fromTab = { ...CONTAPP, tab };
+        await send({ type: "login", url: DECL_HOME }, fromTab);
+        await send({ type: "login", url: ANAF_URL }, fromTab);
+        assert.deepEqual(createdTabs.slice(-2), [{ url: DECL_HOME, ...expected }, { url: ANAF_URL, ...expected }], JSON.stringify(tab));
+    }
 });
 
 test("F5's form is submitted once, and only in a portal tab the login opened", async () => {
@@ -975,6 +1126,74 @@ test("the login tab closes once it reaches the portal, only if it is ours, and t
     assert.deepEqual(removedTabs, [101], "forgotten once closed");
     assert.deepEqual(tell({ type: "login-form" }, 101, POLICY), { submit: false });
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
+});
+
+test("in Firefox, whose JSON viewer runs no content script, the SPV login tab closes once the worker gets an SPV answer", async () => {
+    const html = new TextEncoder().encode("<html>F5</html>");
+    let answer = html;
+    const { send, updateTab, removedTabs, fetchCalls } = loadBackground(async (url) => respond(200, answer, url)(), { firefox: true });
+    const complete = { status: "complete" };
+
+    await send({ type: "fetch", url: ANAF_URL }); // the gateway's page: the session counts as lost
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    await send({ type: "login", url: DECL_HOME }); // tab 102
+    const before = fetchCalls.length;
+
+    await updateTab(101, { status: "loading" }, { url: ANAF_URL });
+    await updateTab(101, complete, { url: "https://webserviced.anaf.ro/my.policy" });
+    await updateTab(101, complete, {});
+    await updateTab(55, complete, { url: ANAF_URL });
+    await updateTab(102, complete, { url: ANAF_URL });
+    assert.equal(fetchCalls.length, before, "nothing to ask: not loaded, not under the REST API, or not an SPV login tab");
+
+    await updateTab(101, complete, { url: ANAF_URL });
+    assert.deepEqual([fetchCalls.length - before, removedTabs], [1, []], "the gateway's HTML page is no answer");
+
+    answer = JSON_BODY;
+    await updateTab(101, complete, { url: `${ANAF_URL}&x=1` });
+    assert.equal(fetchCalls.at(-1).url, `${ANAF_URL}&x=1`);
+    assert.deepEqual(removedTabs, [101]);
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, "the session now counts as alive");
+
+    await updateTab(101, complete, { url: ANAF_URL });
+    assert.deepEqual(removedTabs, [101], "forgotten once closed");
+});
+
+test("in Chrome the SPV login tab waits for login-tab.js instead of a request of the worker's own", async () => {
+    const { send, updateTab, removedTabs, fetchCalls } = loadBackground(respond(200));
+
+    await send({ type: "login", url: ANAF_URL });
+    await updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    assert.deepEqual([fetchCalls, removedTabs], [[], []]);
+});
+
+test("a login tab F5 hangs up on closes, only if it is ours and on its own site's hangup page, and the session stays lost", async () => {
+    const { send, tell, removedTabs } = loadBackground(respond(200, new TextEncoder().encode("<html>F5</html>")));
+    const refused = { type: "login-refused" };
+    const SPV_HANGUP = "https://webserviced.anaf.ro/vdesk/hangup.php3";
+    const DECL_HANGUP = `${DECL_HOME}vdesk/hangup.php3`;
+
+    await send({ type: "fetch", url: ANAF_URL });
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    await send({ type: "login", url: DECL_HOME }); // tab 102
+
+    const notClosed = [
+        ["a tab the user opened", 55, SPV_HANGUP],
+        ["another extension", 101, SPV_HANGUP, "other-extension"],
+        ["another F5 page", 101, "https://webserviced.anaf.ro/my.policy"],
+        ["the portal's hangup page, from the SPV tab", 101, DECL_HANGUP],
+        ["over http", 101, "http://webserviced.anaf.ro/vdesk/hangup.php3"],
+        ["an SPV answer reported as refused", 101, ANAF_URL],
+    ];
+    for (const [name, tabId, url, id] of notClosed) {
+        tell(refused, tabId, url, id);
+        assert.deepEqual(removedTabs, [], name);
+    }
+
+    tell(refused, 101, `${SPV_HANGUP}?x`);
+    tell(refused, 102, DECL_HANGUP);
+    assert.deepEqual(removedTabs, [101, 102]);
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, "a refused login is no session");
 });
 
 test("the SPV login tab closes once it lands on an SPV REST answer, only if it is ours, never on F5's pages", async () => {
@@ -1024,6 +1243,7 @@ test("a login tab is watched, with the worker kept alive, until it closes or fiv
     tell({ type: "login-landed" }, 103, ANAF_URL);
     assert.deepEqual(removedTabs, [], "after five minutes the SPV tab is no longer ours to close");
     assert.deepEqual(timers.map(({ cleared }) => cleared), [true, true, true]);
+    assert.deepEqual(deadlines.filter(({ ms }) => ms === 300_000).map(({ cleared }) => cleared), [true, true, true], "no expiry stays armed once a tab is forgotten");
 });
 
 test("each site keeps its own session: a login clears only the cookies and requests of its own host", async () => {

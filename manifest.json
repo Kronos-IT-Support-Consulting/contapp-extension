@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "ContApp SPV",
+    "name": "ContApp",
     "version": "1.0.0",
-    "description": "Permite ContApp să citească mesajele din SPV ANAF folosind certificatul digital din browser.",
+    "description": "Permite ContApp să folosească serviciile ANAF (mesaje SPV, depunerea declarațiilor) cu certificatul digital din browser.",
     "permissions": ["cookies"],
     "host_permissions": ["*://webserviced.anaf.ro/*", "*://anaf.ro/*", "*://decl.anaf.mfinante.gov.ro/*"],
     "minimum_chrome_version": "119",
@@ -25,7 +25,9 @@
             "matches": [
                 "https://decl.anaf.mfinante.gov.ro/my.policy*",
                 "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*",
-                "https://webserviced.anaf.ro/SPVWS2/rest/*"
+                "https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*",
+                "https://webserviced.anaf.ro/SPVWS2/rest/*",
+                "https://webserviced.anaf.ro/vdesk/hangup.php3*"
             ],
             "js": ["login-tab.js"],
             "run_at": "document_idle"

@@ -200,6 +200,31 @@ test("answers extension when the service worker is unreachable, silent, not an o
     }
 });
 
+test("a message the port refuses, as Chrome does above 64 MiB, answers network at once and leaves nothing pending", async () => {
+    const { context, dispatch, sent, posted, ports } = loadContent(() => ({ ok: true }));
+    const { connect } = context.chrome.runtime;
+    const refused = "Message exceeded maximum allowed size of 64MiB.";
+    context.chrome.runtime.connect = (...args) => {
+        const port = connect(...args);
+        port.postMessage = () => { throw new Error(refused); };
+
+        return port;
+    };
+
+    await dispatch({ ...request, type: "upload", field: "linkdoc", filename: "D700.pdf", contentType: "application/pdf", body: "JVBERi0=" });
+
+    assert.deepEqual(plain(posted.map((p) => p.data)), [{ ok: false, error: "network", message: refused, ...envelope }]);
+    assert.deepEqual([sent, ports[0].disconnected], [[], true]);
+
+    // Nothing is left to cancel, and the next request opens a port of its own as usual.
+    await dispatch({ channel: "contapp-spv", id: request.id, type: "cancel" });
+    assert.equal(posted.length, 1, "the cancel answers nothing");
+    context.chrome.runtime.connect = connect;
+    await dispatch({ ...request, id: "43" });
+    assert.deepEqual(plain(posted[1].data), { ok: true, ...envelope, id: "43" });
+    assert.equal(ports.length, 2);
+});
+
 test("each request gets its own port, closed once the answer is in", async () => {
     const { dispatch, ports } = loadContent(() => ({ ok: true }));
 

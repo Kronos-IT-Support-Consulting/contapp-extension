@@ -1,23 +1,24 @@
-# ContApp SPV browser extension
+# ContApp browser extension
 
 [![CI](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kronos-IT-Support-Consulting/contapp-spv-extension)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Lets [ContApp](https://contapp.ro) read ANAF SPV messages using the qualified certificate that lives in the
-user's browser (USB token, cloud HSM, OS keychain).
+Lets [ContApp](https://contapp.ro) use ANAF's certificate-only services, reading SPV messages and filing
+declarations, with the qualified certificate that lives in the user's browser (USB token, cloud HSM, OS keychain).
 
 ## What it is
 
-ANAF's SPV web service (`https://webserviced.anaf.ro/SPVWS2/rest/`) only answers over mutual TLS, and the
-user's qualified certificate usually lives on a USB token or cloud HSM whose key cannot be exported. The
-browser already knows how to do that handshake (the OS keychain / PKCS#11 middleware asks for the PIN), but
-a ContApp page cannot read the response: ANAF sends no CORS headers and there is no JS API for client
-certificates.
+ANAF's SPV web service (`https://webserviced.anaf.ro/SPVWS2/rest/`) and its declaration filing portal
+(`https://decl.anaf.mfinante.gov.ro/WAS6DUS/`) only answer over mutual TLS, and the user's qualified certificate
+usually lives on a USB token or cloud HSM whose key cannot be exported. The browser already knows how to do that
+handshake (the OS keychain / PKCS#11 middleware asks for the PIN), but a ContApp page cannot read the response: ANAF
+sends no CORS headers and there is no JS API for client certificates.
 
-This extension is a dumb fetch proxy. A ContApp page asks it to fetch an SPV URL, the browser performs the
-mTLS handshake with the user's certificate, and the raw response is handed back to the page. The extension
-holds no API token, does no background polling, stores nothing and never sees the PIN or the private key.
+This extension is a dumb fetch proxy. A ContApp page asks it to fetch an SPV URL (or to upload a signed declaration
+to the portal), the browser performs the mTLS handshake with the user's certificate, and the raw response is handed
+back to the page. The extension holds no API token, does no background polling, stores nothing and never sees the
+PIN or the private key.
 See [PRIVACY.md](PRIVACY.md).
 
 | File | Role |
@@ -28,7 +29,7 @@ See [PRIVACY.md](PRIVACY.md).
 | `login-tab.js` | Injected into the declaration portal's F5 form and pages and into SPV REST answers; in a login tab the extension opened, submits the portal's F5 form once and reports when the login ended, so the worker closes the tab. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
 | `build.sh` | Writes `dist/chrome` and `dist/firefox` and zips both (requires `jq` and `zip`), plus the `-dev` builds that also run on the local `contapp.test` hosts. |
-| `test/` | `node:test` suites that load both scripts in a stubbed `vm` context. |
+| `test/` | `node:test` suites that load the three scripts in a stubbed `vm` context. |
 | `store/` | Store listing texts, the 512 px store icon and the screenshots. |
 | `PRIVACY.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` | Privacy policy (published by GitHub Pages), changelog, security policy, contribution rules, MIT licence. |
 | `.github/` | CI and release workflows, Dependabot, code owners, pull request template. |
@@ -69,10 +70,13 @@ The declaration lists *personally identifying* and *financial* information: the 
 but the SPV responses it relays carry the certificate holder's CNP, CUIs and tax documents, which the ContApp page
 then stores in the user's account, and Mozilla counts data handed outside the add-on as collection. Firefox 140+
 shows this in the install prompt, hence `strict_min_version: "140.0"`. Firefox also lets the user revoke the ANAF
-host permission at any time (*about:addons* → ContApp SPV → the permissions tab); the extension then answers
+host permission at any time (*about:addons* → ContApp → the permissions tab); the extension then answers
 `permission` with the message `permission for https://webserviced.anaf.ro/* is not granted`. The manifest declares no
 `gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
 advisory warning about the Android minimum version, which is expected.
+
+In Firefox, whose JSON viewer runs no content script, the worker requests the address the SPV login tab loaded and
+closes the tab on an SPV answer, so both login tabs close by themselves there too.
 
 Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
 service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
@@ -90,8 +94,10 @@ opened by this extension's content script from a page on one of the hosts the ma
 the port (a `cancel`, or the tab navigating away or closing) aborts the request.
 
 Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fetch`, only URLs under
-`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` for `upload`, and either of those or exactly
-`https://decl.anaf.mfinante.gov.ro/` (the declaration portal's start page) for `login`.
+`https://decl.anaf.mfinante.gov.ro/WAS6DUS/` for `upload`, and for `login` only the two addresses ContApp logs in
+with: the SPV message list, `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje` with any query (`?zile=60`), or
+exactly `https://decl.anaf.mfinante.gov.ro/` (the declaration portal's start page). A login tab is a visible request
+made with the user's certificate, so nothing else is opened on the page's behalf.
 
 | page sends | extension answers |
 |---|---|
@@ -100,7 +106,7 @@ Only URLs under `https://webserviced.anaf.ro/SPVWS2/rest/` are accepted for `fet
 | `{type:"upload", url, field, filename, contentType, body}` | the same as `fetch`: `{ok:true, status, url, body}` with ANAF's answer as an ArrayBuffer |
 | `{type:"login", url}` | `{ok:true, reset, message?}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
 | `{type:"cancel", id}` | nothing; the pending request with that `id` answers `{ok:false, error:"cancelled"}` |
-| any | `{ok:false, error:"certificate_required"\|"session_lost"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"forbidden_origin"\|"network"\|"extension"\|"extension_reloaded"\|"unknown_type", message?}` |
+| any | `{ok:false, error:"certificate_required"\|"certificate_refused"\|"session_lost"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"forbidden_origin"\|"network"\|"extension"\|"extension_reloaded"\|"unknown_type", message?}` |
 
 `upload` POSTs a `multipart/form-data` body with one file part: `field` is the part's name (`linkdoc` for ANAF's
 `displayFile.do`), `filename` and `contentType` its file name and type, and `body` the file's bytes as a base64 string
@@ -135,6 +141,13 @@ replies are unchanged.
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure while the browser is online (offline it is `network` with the message `offline`). The page
   should offer the `login` action.
+- `certificate_refused`: the request ended on F5's hangup page, `https://<host>/vdesk/hangup.php3`, which ANAF
+  shows as *Certificatul nu a fost prezentat*: the browser sent no client certificate. Chrome does that without a
+  picker when the operating system offers none (the cloud certificate's app is not running, the token is not plugged
+  in), and also after the user closes the picker; either way it remembers "no certificate" for the host until the
+  browser quits, so neither a `login` nor clearing cookies helps. Nothing reached the SPV API or the portal (an upload
+  was not filed). For an upload, `message` carries the hangup URL like `session_lost` does. The page should tell the
+  user to start the certificate's app or plug in the token, quit the browser completely and log in again.
 - `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
   `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
   answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). For `upload`, the request ended
@@ -150,10 +163,13 @@ replies are unchanged.
   `decl.anaf.mfinante.gov.ro` (revoked in Firefox, or Chrome's site access set to "on click"); `message` names the
   missing grant. The page should ask the user to grant site access.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the prefix the type
-  accepts (so `…/SPVWS2/rest/../x` is refused). The request and the login tab use the normalised URL.
+  accepts (so `…/SPVWS2/rest/../x` is refused), or its path still carries an encoded dot, slash or backslash or a `;`
+  path parameter, which the parser leaves alone but a server may resolve (`…/rest/..;/x`, `…/rest/..%2Fx`); the query
+  is not checked. The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
-  response or upload too large to hand over (above 47 MiB), an upload whose fields are unusable, and a login tab that
-  could not be opened.
+  response or upload too large to hand over (above 47 MiB; an upload whose base64 exceeds Chrome's 64 MiB message
+  limit, a file above about 48 MiB, is refused by the content script with Chrome's own message before anything reaches
+  the worker), an upload whose fields are unusable, and a login tab that could not be opened.
 - `forbidden_origin`: the request came from a page the extension does not serve. ContApp never sees it in
   practice, since the content script only runs on those hosts.
 - `extension`: the content script got no usable answer from the service worker (a worker that died mid-request).
@@ -176,11 +192,17 @@ A `login` opens its tab next to the ContApp tab (`openerTabId`), so closing it b
 - once the tab reaches `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`, or an SPV answer under
   `https://webserviced.anaf.ro/SPVWS2/rest/` served as JSON or PDF (not F5's `/my.policy`, `/vdesk/…` or `/public/…`
   pages, nor its HTML page under the prefix), tells the worker, which closes the tab and counts that host's session as
-  alive.
+  alive;
+- once the tab lands on F5's hangup page (`/vdesk/hangup.php3` on the same host, *Certificatul nu a fost prezentat*),
+  tells the worker, which closes the tab and keeps the session lost: ContApp's next request answers
+  `certificate_refused` and explains what to do.
 
 The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it restarted, the user
 clicks the button and closes the tab by hand. ANAF opened any other way is left alone. Detecting the SPV answer needs
 the content script: the tab's URL alone cannot tell a JSON answer from the gateway's HTML page under the same prefix.
+Chrome's PDF viewer runs it; Firefox's JSON viewer and pdf.js do not, so in Firefox the worker watches the login tab
+instead: once it has loaded an address under the SPV REST API, the worker requests that address itself and closes the
+tab on an SPV answer (one extra request per login; the tab's URL is readable through the host permission alone).
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 
@@ -216,9 +238,9 @@ window.postMessage({ channel: "contapp-spv", id, type: "ping" }, location.origin
 ## How ContApp uses it
 
 The page side of the protocol (`spv-bridge.js`) lives in the ContApp application, not here. It detects the
-extension through `<html data-spv-extension>`, sends `ping`/`fetch`/`login` requests, and ContApp's server
-parses the SPV responses it hands back. ContApp's connect form offers only the browser extension as the
-way to reach SPV, so any change to the message shapes above must ship in both repositories together.
+extension through `<html data-spv-extension>`, sends `ping`/`fetch`/`upload`/`login`/`cancel` requests, and ContApp's
+server parses the SPV responses it hands back. ContApp's connect form offers only the browser extension as the way
+to reach SPV, so any change to the message shapes above must ship in both repositories together.
 
 ### End-to-end walkthrough (what the user sees)
 
@@ -226,7 +248,7 @@ way to reach SPV, so any change to the message shapes above must ship in both re
    click **Conectează**. The page now shows the connected state with *CNP titular* empty and
    *Nesincronizat încă*.
 2. **Verify** — click **Verifică**.
-   - Without the extension: a callout *Instalează extensia ContApp SPV* appears and the button stays
+   - Without the extension: a callout *Instalează extensia ContApp* appears and the button stays
      disabled. Install, then reload the page.
    - First time in this browser session: a warning toast *ANAF a cerut certificatul…* and a callout with
      the **Autentificare ANAF** button appear. This is expected: a background request cannot show the
@@ -236,8 +258,12 @@ way to reach SPV, so any change to the message shapes above must ship in both re
    choose the SPV certificate, then the token asks for its PIN. The tab ends on a raw JSON page (either
    a message list or `{"eroare":…}`). That JSON *is* the success: the browser now holds the ANAF
    session cookie and remembers the certificate for this host. The extension closes the tab by itself and
-   ContApp comes back.
+   ContApp comes back (in Firefox the JSON opens in Firefox's viewer, where the extension's script does not run, so
+   close the tab yourself).
    If the tab shows an F5 `/my.policy` page instead, wait for it to redirect; if it stays blank, reload it once.
+   If no picker shows at all: Chrome and Edge 128+ remember "no certificate" for a site when none was available
+   the first time ANAF asked (token not plugged in, middleware not running), until the browser is closed completely
+   (every window) and reopened. Plug the token in before the first **Autentificare ANAF**.
 4. **Verify again** — back in ContApp, click **Verifică**. A success toast *Certificat valid pentru CNP …,
    cu acces la N CUI-uri* appears and the page fills in *CNP titular*, *Serie certificat* and *CUI-uri acces*.
 5. **Sync the inbox** — sidebar *Declarații* → *Mesaje SPV* → **Sincronizează SPV**. The toast reports
@@ -279,14 +305,14 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    await ask({ type: "fetch", url });
    ```
 6. Login: `await ask({ type: "login", url })`. Expect `reset: "cleared"`: the fetch in step 5 found no session.
-   A tab opens; pick the certificate, enter the PIN, confirm JSON shows, then close the tab.
+   A tab opens; pick the certificate, enter the PIN; the extension closes the tab once the JSON shows.
 7. Fetch again: `const r = await ask({ type: "fetch", url }); r.status; new TextDecoder().decode(r.body)`.
    Expect status 200 and the messages JSON.
 8. Download one message: take an `id` from step 7 and run
    `await ask({ type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=<id>" })`;
    the body should start with `%PDF` (`new TextDecoder().decode(r.body.slice(0, 4))`).
 9. Forbidden URL: `await ask({ type: "fetch", url: "https://example.com/" })` → `forbidden_url`.
-10. Service worker logs: `chrome://extensions` → ContApp SPV → **service worker** link → console.
+10. Service worker logs: `chrome://extensions` → ContApp → **service worker** link → console.
 
 ### Spike findings
 
@@ -309,9 +335,9 @@ syncing.
 Requires Node 22+, `jq` and `zip`.
 
 ```sh
-npm install      # web-ext and the Chrome Web Store uploader, the only dev dependencies
+npm install      # web-ext, the Chrome Web Store uploader and Playwright, the only dev dependencies
 npm test         # node:test suites in test/
-./build.sh       # dist/chrome, dist/firefox and both zips
+./build.sh       # the four build directories and zips
 npm run lint     # web-ext lint on dist/firefox (run ./build.sh first)
 ```
 
@@ -325,7 +351,7 @@ ContApp tab after each change. `build.sh` strips the `.test` hosts, so release b
 
 To test a build against a local ContApp without loading the source folder, use `dist/chrome-dev` or
 `dist/firefox-dev` (also zipped as `contapp-spv-{chrome,firefox}-dev-<version>.zip`, and attached to every CI run's
-artifact). They are the release code with the `.test` hosts kept, named "ContApp SPV (dev)" and, in Firefox, under
+artifact). They are the release code with the `.test` hosts kept, named "ContApp (dev)" and, in Firefox, under
 their own id, so they install beside the store version. They are never published.
 
 `npm test` runs the unit tests. `npm run test:e2e` loads `dist/chrome` (build first) into Playwright's Chromium,
@@ -413,7 +439,8 @@ from other stores), so the Edge listing below is optional.
 
 - [x] Privacy policy: [PRIVACY.md](PRIVACY.md), served by GitHub Pages at <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>.
 - [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for the
-      `webserviced.anaf.ro` and `anaf.ro` host permissions, data-usage disclosure matching the privacy policy.
+      `webserviced.anaf.ro`, `anaf.ro` and `decl.anaf.mfinante.gov.ro` host permissions and the two content scripts
+      (texts in [store/listing.md](store/listing.md)), data-usage disclosure matching the privacy policy.
 - [ ] Edge Add-ons submission (same package as Chrome; afterwards the release workflow updates it).
 - [ ] Firefox: sign `dist/firefox` via AMO (unlisted / self-distributed), keep the `spv@contapp.ro` gecko id
       stable.
@@ -434,3 +461,5 @@ from other stores), so the Edge listing below is optional.
 - The content script runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and replies go to the whole page through `window.postMessage`: any
   script those pages load, third-party ones included, can drive the proxy and read the SPV answers. Keep those
   pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.
+- In Firefox the SPV login tab closes after one extra request: the worker asks for the address the tab loaded, since
+  Firefox's JSON viewer runs no content script.

@@ -9,6 +9,8 @@ const SPV = site({
     cookieOrigins: ["*://webserviced.anaf.ro/*", "*://anaf.ro/*"],
     // The SPV REST API answers JSON or a PDF; an HTML page under the prefix is the gateway's.
     isAnswer: isRestAnswer,
+    // A login opens the message list, which ContApp verifies the certificate with; its query says how many days.
+    isLogin: (href) => withoutQuery(href) === "https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje",
 });
 // The declaration portal: uploads go to /WAS6DUS/, the login starts at the root, which F5 sends through /my.policy.
 const DECL = site({
@@ -22,6 +24,8 @@ const DECL = site({
     cookieOrigins: ["*://decl.anaf.mfinante.gov.ro/*"],
     // The portal answers an upload with its own HTML page; only the final URL tells it from the gateway's.
     isAnswer: () => true,
+    // A login opens the portal's start page, which leads to F5's form.
+    isLogin: (href) => href === "https://decl.anaf.mfinante.gov.ro/",
 });
 const SITES = [SPV, DECL];
 const CHUNK_SIZE = 0x8000;
@@ -38,6 +42,12 @@ const BODY_TIMEOUT_MS = 5 * 60_000;
 const TIMED_OUT = "timeout";
 const CANCELLED = "cancelled";
 const SESSION_LOST = "session_lost";
+// F5 ends a login it refuses on its hangup page ("Certificatul nu a fost prezentat"): the browser sent no
+// certificate, because the certificate's software or token was not available when ANAF asked (Chrome then sends none
+// without a prompt) or the user closed the certificate picker. Chrome keeps that answer for the host until it quits,
+// so a login cannot help; nothing reached the site either.
+const CERTIFICATE_REFUSED = "certificate_refused";
+const HANGUP_PATH = "/vdesk/hangup.php3";
 const PORT_NAME = "contapp-spv";
 // How long a login tab is watched, so the declaration portal's F5 form can be submitted and the tab closed once it
 // reaches the site's answer; the worker is kept alive for it, since the tab is only known in memory.
@@ -63,18 +73,25 @@ function site(config) {
 }
 
 // The normalised href when the URL is under `prefix`, otherwise null. Normalising first means the check runs on
-// what fetch would actually request: "rest/../admin" resolves out of the prefix.
+// what fetch would actually request: "rest/../admin" resolves out of the prefix. The parser leaves an encoded dot,
+// slash or backslash and a ";" path parameter in place ("rest/..;/admin", "rest/..%2Fadmin"), which a server may
+// still resolve into another path; none of them occurs under the prefixes, so a path carrying one is refused.
 function allowedUrl(url, prefix) {
     if (typeof url !== "string") {
         return null;
     }
 
     let href;
+    let pathname;
 
     try {
-        ({ href } = new URL(url));
+        ({ href, pathname } = new URL(url));
     } catch {
         return null; // not a URL at all
+    }
+
+    if (/;|%2e|%2f|%5c/i.test(pathname)) {
+        return null;
     }
 
     return href.startsWith(prefix) ? href : null;
@@ -91,11 +108,18 @@ function withoutQuery(url) {
     }
 }
 
-// A lost session, saying where the site's requests ended when it reports that.
+// A lost session, saying where the site's requests ended when it reports that. F5's hangup page means no certificate
+// was presented, which only restarting the browser with the certificate available fixes.
 function sessionLost(target, url) {
     const landing = target.reportsLanding ? withoutQuery(url) : undefined;
+    const error = isHangup(target, url) ? CERTIFICATE_REFUSED : SESSION_LOST;
 
-    return { ok: false, error: SESSION_LOST, ...(landing && { message: landing }) };
+    return { ok: false, error, ...(landing && { message: landing }) };
+}
+
+// Whether the URL is F5's hangup page on the site's own host.
+function isHangup(target, url) {
+    return typeof url === "string" && withoutQuery(url) === `https://${target.host}${HANGUP_PATH}`;
 }
 
 // Whether the URL is F5's login page, minus its query.
@@ -103,10 +127,11 @@ function isPolicy(target, url) {
     return Boolean(target.policy) && typeof url === "string" && url.split(/[?#]/)[0] === target.policy;
 }
 
-// The site and normalised href a login may open: anywhere under a site's API, or the declaration portal's root.
+// The site and normalised href a login may open: only the one address per site that ContApp logs in with. A login
+// tab is a visible request made with the user's certificate, so nothing else is opened on the page's behalf.
 function loginTarget(url) {
     const href = allowedUrl(url, "https://");
-    const target = href && SITES.find(({ api, home }) => href.startsWith(api) || href === home);
+    const target = href && SITES.find(({ isLogin }) => isLogin(href));
 
     return target ? { target, href } : null;
 }
@@ -162,8 +187,9 @@ function fromContApp(sender) {
 
     const { hostname } = url;
 
+    // Chrome lists the scripts as written in the manifest, Firefox as moz-extension:// URLs.
     return chrome.runtime.getManifest().content_scripts
-        .filter(({ js }) => js.includes("content.js"))
+        .filter(({ js }) => js.some((file) => file === "content.js" || file.endsWith("/content.js")))
         .flatMap(({ matches }) => matches)
         .some((pattern) => {
             const host = pattern.match(/^https:\/\/([^/]+)\/\*$/)?.[1];
@@ -199,7 +225,12 @@ function acquireSlot(target, signal) {
             resolve();
         };
         const cancel = () => {
-            waiting.splice(waiting.indexOf(take), 1);
+            const index = waiting.indexOf(take);
+
+            // Not -1: splice(-1, 1) would drop someone else's waiter, should `take` ever leave the queue earlier.
+            if (index >= 0) {
+                waiting.splice(index, 1);
+            }
             reject(signal.reason);
         };
 
@@ -230,7 +261,7 @@ async function request(url, init, signal) {
             return { failure: navigator.onLine === false ? networkError("offline") : { ok: false, error: "certificate_required" } };
         }
 
-        console.debug("ContApp SPV fetch failed", error);
+        console.debug("ContApp fetch failed", error);
 
         return { failure: networkError(error) };
     }
@@ -271,7 +302,7 @@ async function fetchBody(target, url, init, signal, onHeaders) {
 
         return { ok: true, status: response.status, url: response.url, body: toBase64(buffer) };
     } catch (error) {
-        console.debug("ContApp SPV body read failed", error);
+        console.debug("ContApp body read failed", error);
 
         return networkError(error);
     }
@@ -429,11 +460,17 @@ async function proxyUpload(url, message, controller) {
     return answer;
 }
 
-// Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all.
+// Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all. Chrome
+// rejects the property, and since Chrome 148 it has a `browser` namespace too, so Firefox is told by an API only it
+// has: runtime.getBrowserInfo.
 function cookieQuery(target) {
     const query = { domain: target.cookieDomain, partitionKey: {} };
 
-    return typeof browser === "undefined" ? query : { ...query, firstPartyDomain: null };
+    return isFirefox() ? { ...query, firstPartyDomain: null } : query;
+}
+
+function isFirefox() {
+    return typeof chrome.runtime.getBrowserInfo === "function";
 }
 
 // The browser sends the host its own cookies and those set on a parent domain such as .anaf.ro.
@@ -484,7 +521,7 @@ async function resetLostSession(target) {
 
         return { reset: "cleared" };
     } catch (error) {
-        console.warn("ContApp SPV could not clear the ANAF session", error);
+        console.warn("ContApp could not clear the ANAF session", error);
 
         return { reset: "failed", message: String(error?.message ?? error) };
     }
@@ -513,10 +550,13 @@ function forgetLoginTab(tabId) {
     loginTabs.delete(tabId);
 }
 
-// The tab opens next to the ContApp tab that asked, so closing it brings that tab back and the page resumes.
+// The tab opens next to the ContApp tab that asked, in that tab's window, so closing it brings that tab back and the
+// page resumes. Without `windowId` Chrome creates the tab in the last focused window and then refuses an opener that
+// lives in another one ("Tab opener must be in the same window as the updated tab").
 async function openLogin({ target, href }, opener) {
     const outcome = await resetLostSession(target);
-    const tab = await chrome.tabs.create({ url: href, ...(opener !== undefined && { openerTabId: opener }) });
+    const beside = opener?.id !== undefined && { openerTabId: opener.id, ...(opener.windowId !== undefined && { windowId: opener.windowId }) };
+    const tab = await chrome.tabs.create({ url: href, ...beside });
 
     if (tab?.id !== undefined) {
         watchLoginTab(tab.id, target);
@@ -542,13 +582,38 @@ function onLoginTabMessage(message, sender) {
         return { submit: true };
     }
 
-    if (message?.type === "login-landed" && allowedUrl(sender.url, tab.target.api)) {
+    const landed = message?.type === "login-landed" && allowedUrl(sender.url, tab.target.api);
+    // F5 refused the login: ContApp explains why once the user is back, which closing the tab brings about.
+    const refused = message?.type === "login-refused" && isHangup(tab.target, sender.url);
+
+    if (landed || refused) {
         forgetLoginTab(tabId);
-        tab.target.sessionAlive = true;
-        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp SPV could not close the login tab", error));
+        tab.target.sessionAlive = landed;
+        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp could not close the login tab", error));
     }
 
     return { submit: false };
+}
+
+// Firefox runs no content script in its JSON viewer or in pdf.js, so login-tab.js never reports an SPV answer there.
+// Once a login tab has loaded an address under the SPV REST API, the worker asks for it itself: an SPV answer means the
+// login worked, and the tab closes as it does in Chrome. The tab's URL is readable through the host permission alone.
+async function onLoginTabUpdated(tabId, { status } = {}, tab) {
+    const watched = loginTabs.get(tabId);
+    const url = allowedUrl(tab?.url, SPV.api);
+
+    if (!isFirefox() || watched?.target !== SPV || status !== "complete" || !url || watched.probing) {
+        return;
+    }
+
+    watched.probing = true;
+    const reply = await proxyFetch(SPV, url, new AbortController());
+    watched.probing = false;
+
+    if (reply.ok && !(reply.status >= 400) && loginTabs.get(tabId) === watched) {
+        forgetLoginTab(tabId);
+        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp could not close the login tab", error));
+    }
 }
 
 async function handle(message, controller, sender) {
@@ -572,7 +637,7 @@ async function handle(message, controller, sender) {
         case "login": {
             const login = loginTarget(message.url);
 
-            return login ? openLogin(login, sender?.tab?.id) : forbidden;
+            return login ? openLogin(login, sender?.tab) : forbidden;
         }
         default:
             return { ok: false, error: "unknown_type" };
@@ -607,7 +672,7 @@ chrome.runtime.onConnect.addListener((port) => {
     });
     port.onMessage.addListener((message) => {
         handle(message, controller, port.sender).then(answer, (error) => {
-            console.debug("ContApp SPV handler failed", error);
+            console.debug("ContApp handler failed", error);
             answer(networkError(error));
         });
     });
@@ -617,3 +682,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(onLoginTabMessage(message, sender));
 });
 chrome.tabs.onRemoved.addListener(forgetLoginTab);
+chrome.tabs.onUpdated.addListener(onLoginTabUpdated);

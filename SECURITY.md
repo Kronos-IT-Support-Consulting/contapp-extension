@@ -8,7 +8,7 @@ must be downloaded again.
 
 ## Reporting a vulnerability
 
-E-mail **suport@contapp.ro** with the subject `[ContApp SPV extension] security`. Include the browser and
+E-mail **suport@contapp.ro** with the subject `[ContApp extension] security`. Include the browser and
 extension version (`chrome://extensions`), what you did, what happened and, if you have one, a proof of concept.
 Please do not open a public issue for security problems.
 
@@ -17,6 +17,9 @@ in `CHANGELOG.md` unless you prefer otherwise.
 
 ## Scope
 
-The extension only forwards requests from ContApp pages to `https://webserviced.anaf.ro/SPVWS2/rest/*` and
-returns the raw response. Reports about the ContApp application itself go to the same address; reports about
+The extension only forwards requests from ContApp pages: `fetch` to `https://webserviced.anaf.ro/SPVWS2/rest/*` and
+`upload` (the signed declaration) to `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*`, returning the raw response. For
+the declaration portal it also logs in silently (`GET /`, `POST /my.policy`). A `login` deletes that host's ANAF
+cookies and opens the login tab, where the `login-tab.js` content script submits the portal's F5 form and reports
+when the login ended. Reports about the ContApp application itself go to the same address; reports about
 ANAF's service go to ANAF.

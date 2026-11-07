@@ -106,11 +106,9 @@ jobs:
         run: |
           jq --arg v "$VERSION" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
 
-      # Nothing in the lockfile needs an install script. Dependency code still runs in lint and the store steps,
-      # which is why the GitHub token only reaches the steps that call gh. The tests load only node: built-ins and
-      # build.sh only uses system tools, so the zips are built and hashed before any dependency code runs.
-      - run: npm ci --ignore-scripts
-
+      # The tests load only node: built-ins and build.sh only uses system tools, so both run before the dependencies
+      # are even installed: the zips are built and hashed before any dependency code can run (npm run puts
+      # node_modules/.bin first on PATH, where a dependency could shadow `node` itself).
       - run: npm test
 
       - run: ./build.sh
@@ -133,6 +131,10 @@ jobs:
           for target in chrome firefox; do
             jq -e '[.content_scripts[].matches[] | select(test("\\.test/"))] | length == 0' "dist/$target/manifest.json"
           done
+
+      # Nothing in the lockfile needs an install script. Dependency code runs from here on, in lint and the store
+      # steps, which is why the GitHub token only reaches the steps that call gh.
+      - run: npm ci --ignore-scripts
 
       # web-ext is dependency code: it lints a copy, never the directory the zips came from.
       - name: Lint a copy of the Firefox build
