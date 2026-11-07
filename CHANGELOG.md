@@ -32,6 +32,25 @@ All notable changes to this project are documented here. The format is based on
   `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY`; the old GitHub Pages address no
   longer answers, so each store's privacy-policy field needs the new one. Links in the docs point at the new name.
 - The README's walkthrough, error list, spike findings and known limitations describe 2.3.0's behaviour.
+- The README walkthrough asks to start the certificate's app before the first *Verifică*, describes Firefox's 90 s
+  wait when that app is closed, names the session-lost toast for an expired session and adds the filing and
+  outcome-unknown (*Caută la ANAF*) steps. It and the known limitations no longer list a wrong PIN as a cause of the
+  remembered "no certificate": Chromium clears that choice on a signing error; the app not running or dropping the
+  certificate (for example after a wrong code) is the cause.
+- The store reviewer notes say a fetch without a certificate answers `certificate_required`, or `certificate_refused`
+  when the operating system offers no client certificate, and that ContApp opens the portal login tab by itself.
+- The release workflow runs the npm tools (the Chrome Web Store uploader, `web-ext sign`) in their own jobs, each
+  holding only its store's secrets and a read-only token; the job that creates the GitHub release, uploads to Edge
+  and attaches the signed Firefox package runs no npm code.
+- The 2.3.0 rename entry, wrongly repeated under 1.5.0, is removed there.
+
+### Security
+
+- The privacy policy, store texts and security policy disclose the `login-tab.js` matches on F5's hangup page
+  (`https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*`, `https://webserviced.anaf.ro/vdesk/hangup.php3*`), where
+  a refused login is reported and the extension closes the login tab it opened; that only Firefox reads the address
+  of that login tab and requests an SPV address it loaded once per page load (the answer is discarded), while Chrome
+  and Edge read no tab; and that the extension does not run in private windows.
 
 ## [2.3.0] — 2026-11-07
 
@@ -120,11 +139,6 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- The extension is called **ContApp** instead of *ContApp SPV*, since it does more than read SPV: the manifest
-  `name` (the dev builds are "ContApp (dev)") and `description` (now naming SPV messages and declaration filing),
-  the log prefixes, README, privacy and security policies and store texts. The icons drop the "SPV" badge and show
-  the ContApp mark alone; the store icon and the 440×280 promo tile are redrawn to match. The gecko ids, the page
-  protocol (`contapp-spv` channel, `data-spv-extension`), the repository and the release zip names are unchanged.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or
