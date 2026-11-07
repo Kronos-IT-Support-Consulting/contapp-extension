@@ -397,9 +397,13 @@ workflow then runs the tests, builds, lints, and creates the GitHub Release with
 from the merged pull requests. Creating a release needs write access to the repository; a pushed tag is only
 released when its commit is on `main`, and once created, `v*` tags cannot be moved or deleted (ruleset *Release
 tags*). Re-running the workflow on a commit that is already released refreshes that release's assets instead of
-bumping again; a store that already holds the version will then refuse it, which the last step reports.
+bumping again; a store that already holds the version will then refuse it, which the final `result` job reports.
 
-Three more steps run only when their secrets are configured, and are skipped otherwise:
+The npm tools (web-ext, the Chrome Web Store uploader) run in their own jobs (`lint`, `cws`, `amo`), each with at most
+its own store's secrets and a read-only token. The `release` job (GitHub release, Edge upload) and the `attach` job
+(signed `.xpi` onto the release) hold the release-writing token and install no npm dependencies; files pass between
+jobs as artifacts and are checked against the digests `release` recorded. Three store uploads run only when their
+secrets are configured, and are skipped otherwise:
 
 | Step | Repository secrets |
 |---|---|
