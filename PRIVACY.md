@@ -1,8 +1,8 @@
-# Politica de confidențialitate — extensia ContApp SPV
+# Politica de confidențialitate — extensia ContApp
 
-Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 06.11.2026 · [English version below](#privacy-policy--contapp-spv-extension)
+Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 07.11.2026 · [English version below](#privacy-policy--contapp-extension)
 
-Această politică explică ce date prelucrează extensia de browser **ContApp SPV**, de ce, pe ce temei și ce drepturi
+Această politică explică ce date prelucrează extensia de browser **ContApp**, de ce, pe ce temei și ce drepturi
 aveți, conform art. 13 din Regulamentul (UE) 2016/679 (GDPR). Ea completează
 [Politica de confidențialitate ContApp](https://contapp.ro/politica-de-confidentialitate/),
 [Termenii și condițiile](https://contapp.ro/termeni-si-conditii/) și
@@ -130,9 +130,10 @@ portalului de declarații, ca browserul să poată afișa alegerea certificatulu
 necesită nicio permisiune, iar extensia nu citește filele deschise. Fila este deschisă lângă fila ContApp; pe portalul
 de declarații formularul de autentificare ANAF din ea este trimis automat o singură dată (vedeți scriptul de conținut
 de mai sus). Fila este închisă automat când autentificarea a reușit (fila a ajuns în portal sau la un răspuns SPV), ca
-să reveniți în ContApp; extensia o urmărește cel mult 5 minute și nu închide nicio altă filă. În Firefox, fila de
-autentificare SPV nu se închide singură: Firefox afișează răspunsul JSON în propriul vizualizator, unde scripturile
-extensiilor nu rulează, așa că o închideți dumneavoastră; fila portalului de declarații se închide și în Firefox.
+să reveniți în ContApp; extensia o urmărește cel mult 5 minute și nu închide nicio altă filă. În Firefox, unde
+scripturile extensiilor nu rulează în vizualizatorul JSON, extensia cere ea însăși adresa SPV pe care s-a oprit fila
+de autentificare, o singură dată, și închide fila dacă ANAF răspunde; răspunsul nu este trimis paginii ContApp și nu
+este păstrat.
 
 În Chrome și Edge 128 sau mai noi, dacă niciun certificat potrivit nu este disponibil când ANAF îl cere prima dată
 (tokenul nu este conectat, programul lui nu rulează), browserul reține că nu există certificat pentru acel site și
@@ -156,9 +157,9 @@ Personal (ANSPDCP), B-dul G-ral. Gheorghe Magheru nr. 28-30, sector 1, cod poșt
 
 ## 10. Dezinstalare
 
-- Chrome: `chrome://extensions` → ContApp SPV → Eliminați.
-- Edge: `edge://extensions` → ContApp SPV → Eliminați.
-- Firefox: `about:addons` → ContApp SPV → Eliminați.
+- Chrome: `chrome://extensions` → ContApp → Eliminați.
+- Edge: `edge://extensions` → ContApp → Eliminați.
+- Firefox: `about:addons` → ContApp → Eliminați.
 
 Dezinstalarea nu șterge nimic din ContApp: mesajele și documentele sincronizate rămân în cont. Pentru ștergerea lor,
 vedeți secțiunea 9.
@@ -170,11 +171,11 @@ nouă a extensiei ar prelucra date în alt mod, actualizăm politica înainte de
 
 ---
 
-# Privacy policy — ContApp SPV extension
+# Privacy policy — ContApp extension
 
-Effective date: 14 October 2026 · Last updated: 6 November 2026
+Effective date: 14 October 2026 · Last updated: 7 November 2026
 
-This policy explains what data the **ContApp SPV** browser extension processes, why, on what legal basis and what
+This policy explains what data the **ContApp** browser extension processes, why, on what legal basis and what
 rights you have, under Article 13 of Regulation (EU) 2016/679 (GDPR). It supplements the
 [ContApp privacy policy](https://contapp.ro/politica-de-confidentialitate/), the
 [terms and conditions](https://contapp.ro/termeni-si-conditii/) and the
@@ -296,9 +297,9 @@ start page so the browser can show the certificate picker and the PIN prompt; op
 the extension does not read open tabs. The tab opens next to the ContApp tab; on the declaration portal the ANAF login
 form in it is submitted automatically once (see the content script above). The tab is closed automatically once the
 login succeeds (it reached the portal or an SPV answer), so you are back in ContApp; the extension watches it for at
-most 5 minutes and closes no other tab. In Firefox the SPV login tab does not close by itself: Firefox shows the JSON
-answer in its own viewer, where extensions' scripts do not run, so you close it; the declaration portal's tab does
-close in Firefox.
+most 5 minutes and closes no other tab. In Firefox, where extensions' scripts do not run in the JSON viewer,
+the extension itself requests the SPV address the login tab stopped on, once, and closes the tab if ANAF answers; that
+answer is not passed to the ContApp page and is not kept.
 
 In Chrome and Edge 128 and newer, if no matching certificate is available when ANAF first asks for one (token not
 plugged in, its software not running), the browser remembers that there is no certificate for that site and the login
@@ -322,9 +323,9 @@ postal code 010336, Bucharest, [anspdcp@dataprotection.ro](mailto:anspdcp@datapr
 
 ## 10. Uninstalling
 
-- Chrome: `chrome://extensions` → ContApp SPV → Remove.
-- Edge: `edge://extensions` → ContApp SPV → Remove.
-- Firefox: `about:addons` → ContApp SPV → Remove.
+- Chrome: `chrome://extensions` → ContApp → Remove.
+- Edge: `edge://extensions` → ContApp → Remove.
+- Firefox: `about:addons` → ContApp → Remove.
 
 Uninstalling deletes nothing in ContApp: synced messages and documents stay in your account. To have them deleted,
 see section 9.

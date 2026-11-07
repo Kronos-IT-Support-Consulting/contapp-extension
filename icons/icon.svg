@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <!-- contapp mark (brand green #00AC4E) with an SPV badge; Chrome's guideline keeps the artwork inside 112x112 -->
-  <g transform="translate(8 4) scale(2.43)">
+  <!-- contapp mark (brand green #00AC4E); Chrome's guideline keeps the artwork inside 112x112 -->
+  <g transform="translate(8 8) scale(2.835443)">
     <path d="M31.6 0H24.2701L33.6361 6.84124C35.835 8.4701 37.1381 10.832 37.1381 13.2753C37.1381 15.7186 35.835 18.0804 33.6361 19.7093L17.5918 31.4371L12.868 28.2608L30.2969 15.1485C31.0299 14.5784 31.5186 13.9268 31.5186 13.2753C31.5186 12.6237 31.1113 11.9722 30.2969 11.4021L14.7412 0H7.9C3.5835 0 0 3.5835 0 7.9V31.6C0 35.9165 3.5835 39.5 7.9 39.5H15.3928L6.27113 32.8216C4.07216 31.1928 2.76907 28.8309 2.76907 26.3876C2.76907 23.9443 4.07216 21.5825 6.27113 19.9536L22.3155 8.22577L26.8763 11.5649L9.61031 24.5144C8.87732 25.0845 8.38866 25.7361 8.38866 26.3876C8.38866 27.0392 8.79588 27.6907 9.61031 28.2608L24.9216 39.4186H31.6C35.9165 39.4186 39.5 35.8351 39.5 31.5186V7.9C39.5 3.5835 35.9165 0 31.6 0Z" fill="#00AC4E"/>
   </g>
-  <rect x="50" y="80" width="74" height="42" rx="12" fill="#231F20" stroke="#ffffff" stroke-width="4"/>
-  <text x="87" y="109.5" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="800" font-size="27" letter-spacing="0.5" fill="#ffffff">SPV</text>
 </svg>

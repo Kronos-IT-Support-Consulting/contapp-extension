@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- The extension is called **ContApp** instead of *ContApp SPV*, since it does more than read SPV: the manifest
+  `name` (the dev builds are "ContApp (dev)") and `description` (now naming SPV messages and declaration filing),
+  the log prefixes, README, privacy and security policies and store texts. The icons drop the "SPV" badge and show
+  the ContApp mark alone; the store icon and the 440×280 promo tile are redrawn to match. The gecko ids, the page
+  protocol (`contapp-spv` channel, `data-spv-extension`), the repository and the release zip names are unchanged.
 - `login` only opens the two addresses ContApp logs in with: `https://webserviced.anaf.ro/SPVWS2/rest/listaMesaje`
   (any query) and exactly `https://decl.anaf.mfinante.gov.ro/`; other URLs under the two prefixes answer
   `forbidden_url`.
@@ -86,6 +91,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- The extension is called **ContApp** instead of *ContApp SPV*, since it does more than read SPV: the manifest
+  `name` (the dev builds are "ContApp (dev)") and `description` (now naming SPV messages and declaration filing),
+  the log prefixes, README, privacy and security policies and store texts. The icons drop the "SPV" badge and show
+  the ContApp mark alone; the store icon and the 440×280 promo tile are redrawn to match. The gecko ids, the page
+  protocol (`contapp-spv` channel, `data-spv-extension`), the repository and the release zip names are unchanged.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or

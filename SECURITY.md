@@ -8,7 +8,7 @@ must be downloaded again.
 
 ## Reporting a vulnerability
 
-E-mail **suport@contapp.ro** with the subject `[ContApp SPV extension] security`. Include the browser and
+E-mail **suport@contapp.ro** with the subject `[ContApp extension] security`. Include the browser and
 extension version (`chrome://extensions`), what you did, what happened and, if you have one, a proof of concept.
 Please do not open a public issue for security problems.
 

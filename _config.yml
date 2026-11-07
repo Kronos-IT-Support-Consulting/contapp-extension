@@ -1,6 +1,6 @@
 # GitHub Pages (Settings → Pages: branch main, folder /) renders the Markdown files; keep the code out of the site.
-title: ContApp SPV
-description: Browser extension that lets ContApp read ANAF SPV messages with the certificate held by the browser.
+title: ContApp
+description: Browser extension that lets ContApp use ANAF services (SPV messages, declaration filing) with the certificate held by the browser.
 exclude:
   - background.js
   - content.js

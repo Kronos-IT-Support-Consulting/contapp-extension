@@ -1,23 +1,24 @@
-# ContApp SPV browser extension
+# ContApp browser extension
 
 [![CI](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kronos-IT-Support-Consulting/contapp-spv-extension)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Lets [ContApp](https://contapp.ro) read ANAF SPV messages using the qualified certificate that lives in the
-user's browser (USB token, cloud HSM, OS keychain).
+Lets [ContApp](https://contapp.ro) use ANAF's certificate-only services, reading SPV messages and filing
+declarations, with the qualified certificate that lives in the user's browser (USB token, cloud HSM, OS keychain).
 
 ## What it is
 
-ANAF's SPV web service (`https://webserviced.anaf.ro/SPVWS2/rest/`) only answers over mutual TLS, and the
-user's qualified certificate usually lives on a USB token or cloud HSM whose key cannot be exported. The
-browser already knows how to do that handshake (the OS keychain / PKCS#11 middleware asks for the PIN), but
-a ContApp page cannot read the response: ANAF sends no CORS headers and there is no JS API for client
-certificates.
+ANAF's SPV web service (`https://webserviced.anaf.ro/SPVWS2/rest/`) and its declaration filing portal
+(`https://decl.anaf.mfinante.gov.ro/WAS6DUS/`) only answer over mutual TLS, and the user's qualified certificate
+usually lives on a USB token or cloud HSM whose key cannot be exported. The browser already knows how to do that
+handshake (the OS keychain / PKCS#11 middleware asks for the PIN), but a ContApp page cannot read the response: ANAF
+sends no CORS headers and there is no JS API for client certificates.
 
-This extension is a dumb fetch proxy. A ContApp page asks it to fetch an SPV URL, the browser performs the
-mTLS handshake with the user's certificate, and the raw response is handed back to the page. The extension
-holds no API token, does no background polling, stores nothing and never sees the PIN or the private key.
+This extension is a dumb fetch proxy. A ContApp page asks it to fetch an SPV URL (or to upload a signed declaration
+to the portal), the browser performs the mTLS handshake with the user's certificate, and the raw response is handed
+back to the page. The extension holds no API token, does no background polling, stores nothing and never sees the
+PIN or the private key.
 See [PRIVACY.md](PRIVACY.md).
 
 | File | Role |
@@ -69,14 +70,13 @@ The declaration lists *personally identifying* and *financial* information: the 
 but the SPV responses it relays carry the certificate holder's CNP, CUIs and tax documents, which the ContApp page
 then stores in the user's account, and Mozilla counts data handed outside the add-on as collection. Firefox 140+
 shows this in the install prompt, hence `strict_min_version: "140.0"`. Firefox also lets the user revoke the ANAF
-host permission at any time (*about:addons* → ContApp SPV → the permissions tab); the extension then answers
+host permission at any time (*about:addons* → ContApp → the permissions tab); the extension then answers
 `permission` with the message `permission for https://webserviced.anaf.ro/* is not granted`. The manifest declares no
 `gecko_android` key because Firefox for Android has no client-certificate store; `web-ext lint` still prints one
 advisory warning about the Android minimum version, which is expected.
 
-In Firefox the SPV login tab does not close by itself: Firefox shows the JSON answer in its own viewer, where
-extensions' content scripts do not run, so the user closes the tab once it shows the JSON. The declaration portal's
-login tab does close in Firefox.
+In Firefox, whose JSON viewer runs no content script, the worker requests the address the SPV login tab loaded and
+closes the tab on an SPV answer, so both login tabs close by themselves there too.
 
 Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
 service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
@@ -248,7 +248,7 @@ to reach SPV, so any change to the message shapes above must ship in both reposi
    click **Conectează**. The page now shows the connected state with *CNP titular* empty and
    *Nesincronizat încă*.
 2. **Verify** — click **Verifică**.
-   - Without the extension: a callout *Instalează extensia ContApp SPV* appears and the button stays
+   - Without the extension: a callout *Instalează extensia ContApp* appears and the button stays
      disabled. Install, then reload the page.
    - First time in this browser session: a warning toast *ANAF a cerut certificatul…* and a callout with
      the **Autentificare ANAF** button appear. This is expected: a background request cannot show the
@@ -312,7 +312,7 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
    `await ask({ type: "fetch", url: "https://webserviced.anaf.ro/SPVWS2/rest/descarcare?id=<id>" })`;
    the body should start with `%PDF` (`new TextDecoder().decode(r.body.slice(0, 4))`).
 9. Forbidden URL: `await ask({ type: "fetch", url: "https://example.com/" })` → `forbidden_url`.
-10. Service worker logs: `chrome://extensions` → ContApp SPV → **service worker** link → console.
+10. Service worker logs: `chrome://extensions` → ContApp → **service worker** link → console.
 
 ### Spike findings
 
@@ -351,7 +351,7 @@ ContApp tab after each change. `build.sh` strips the `.test` hosts, so release b
 
 To test a build against a local ContApp without loading the source folder, use `dist/chrome-dev` or
 `dist/firefox-dev` (also zipped as `contapp-spv-{chrome,firefox}-dev-<version>.zip`, and attached to every CI run's
-artifact). They are the release code with the `.test` hosts kept, named "ContApp SPV (dev)" and, in Firefox, under
+artifact). They are the release code with the `.test` hosts kept, named "ContApp (dev)" and, in Firefox, under
 their own id, so they install beside the store version. They are never published.
 
 `npm test` runs the unit tests. `npm run test:e2e` loads `dist/chrome` (build first) into Playwright's Chromium,
@@ -461,5 +461,5 @@ from other stores), so the Edge listing below is optional.
 - The content script runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and replies go to the whole page through `window.postMessage`: any
   script those pages load, third-party ones included, can drive the proxy and read the SPV answers. Keep those
   pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.
-- In Firefox the SPV login tab does not close by itself: the JSON answer is shown by Firefox's viewer, where
-  extensions' content scripts do not run, so the user closes it. The declaration portal's tab does close.
+- In Firefox the SPV login tab closes after one extra request: the worker asks for the address the tab loaded, since
+  Firefox's JSON viewer runs no content script.
