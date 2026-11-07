@@ -21,13 +21,6 @@ All notable changes to this project are documented here. The format is based on
 - The extension does not run in private windows (`"incognito": "not_allowed"`).
 - Only Firefox registers the `tabs.onUpdated` listener (filtered to SPV addresses): in Chrome it woke the service worker
   on every tab update in the browser.
-
-### Security
-
-- URLs carrying a user name or password, or an encoded `%` or NUL in the path, are refused (`forbidden_url`).
-
-### Changed
-
 - The repository is renamed `contapp-extension`, so the privacy policy now lives at
   `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY`; the old GitHub Pages address no
   longer answers, so each store's privacy-policy field needs the new one. Links in the docs point at the new name.
@@ -46,6 +39,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Security
 
+- URLs carrying a user name or password, or an encoded `%` or NUL in the path, are refused (`forbidden_url`).
 - The privacy policy, store texts and security policy disclose the `login-tab.js` matches on F5's hangup page
   (`https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*`, `https://webserviced.anaf.ro/vdesk/hangup.php3*`), where
   a refused login is reported and the extension closes the login tab it opened; that only Firefox reads the address
