@@ -122,18 +122,24 @@ este public, la [github.com/Kronos-IT-Support-Consulting/contapp-extension](http
 | Acces la `*://anaf.ro/*` | Folosit numai pentru cookie-uri: browserul îi arată extensiei și o lasă să șteargă un cookie setat pentru `.anaf.ro` (pe care îl trimite și către `webserviced.anaf.ro`) doar dacă are acces la `anaf.ro`. Extensia nu face nicio cerere către `anaf.ro`. |
 | Acces la `*://decl.anaf.mfinante.gov.ro/*` | Trimite la portalul de depunere a declarațiilor al ANAF declarația PDF pe care ați ales să o depuneți și citește răspunsul portalului, pe care paginile web nu îl pot citi direct. Extensia trimite fișiere (POST) numai la adrese care încep cu `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` și deschide fila de autentificare numai pe pagina de start a portalului, `https://decl.anaf.mfinante.gov.ro/`. Când sesiunea portalului nu este cunoscută ca activă sau a expirat, extensia se autentifică singură înainte de depunere, la fel cum ar face pagina de autentificare ANAF: deschide pagina de start a portalului și trimite formularul de autentificare (`POST https://decl.anaf.mfinante.gov.ro/my.policy` cu singurul câmp `vhost=standard`); browserul folosește certificatul ales deja pentru portal în sesiunea curentă a browserului, iar dacă nu a fost ales niciunul, nu se trimite nimic și ContApp vă cere autentificarea. Extensia nu citește conținutul acestor pagini. Accesul cuprinde și `http://` numai pentru că altfel browserul nu îi arată extensiei cookie-urile portalului fără atributul Secure; extensia nu face nicio cerere prin HTTP. |
 | Script de conținut pe `https://{account,contabilitate,declaratiaunica}.contapp.ro/*` | Primește cererile paginii ContApp și îi întoarce răspunsurile. Nu rulează pe alte site-uri. |
-| Script de conținut pe `https://decl.anaf.mfinante.gov.ro/my.policy*`, `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*` și `https://webserviced.anaf.ro/SPVWS2/rest/*` | Numai în fila de autentificare deschisă de extensie la cererea ContApp: pe portalul de declarații apasă o singură dată butonul „Prezentare certificat” al paginii de autentificare ANAF (dacă renunțați la alegerea certificatului, butonul rămâne pentru dumneavoastră); când fila ajunge în portal sau la un răspuns al serviciului SPV (JSON sau PDF), îi spune extensiei să o închidă. În orice altă filă cu aceste adrese doar întreabă extensia dacă fila este una deschisă de ea, apoi nu face nimic. Citește doar tipul documentului afișat (de exemplu JSON), nu conținutul paginilor, și nu transmite date din ele. |
+| Script de conținut pe `https://decl.anaf.mfinante.gov.ro/my.policy*`, `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*`, `https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*`, `https://webserviced.anaf.ro/SPVWS2/rest/*` și `https://webserviced.anaf.ro/vdesk/hangup.php3*` | Numai în fila de autentificare deschisă de extensie la cererea ContApp: pe portalul de declarații apasă o singură dată butonul „Prezentare certificat” al paginii de autentificare ANAF (dacă renunțați la alegerea certificatului, butonul rămâne pentru dumneavoastră); când fila ajunge în portal sau la un răspuns al serviciului SPV (JSON sau PDF), îi spune extensiei să o închidă. Când fila ajunge pe pagina prin care ANAF refuză autentificarea pentru că browserul nu a trimis niciun certificat (`/vdesk/hangup.php3`), îi spune extensiei că autentificarea a fost refuzată, iar extensia închide fila pe care a deschis-o, ca ContApp să vă explice ce aveți de făcut. În orice altă filă cu aceste adrese doar întreabă extensia dacă fila este una deschisă de ea, apoi nu face nimic. Citește doar tipul documentului afișat (de exemplu JSON), nu conținutul paginilor, și nu transmite date din ele. |
 | Cookie-uri (`cookies`) | Șterge cookie-urile pe care browserul le trimite către `webserviced.anaf.ro` sau `decl.anaf.mfinante.gov.ro` înainte de deschiderea filei de autentificare ANAF pentru acel server, când sesiunea lui nu mai funcționează, ca o sesiune eșuată să nu blocheze o nouă autentificare. Nu folosește, nu salvează și nu transmite valorile cookie-urilor și nu atinge alte site-uri. |
 
 Pentru autentificarea la ANAF, extensia deschide o filă nouă pe adresa listei de mesaje SPV sau pe pagina de start a
 portalului de declarații, ca browserul să poată afișa alegerea certificatului și cererea de PIN; deschiderea filei nu
-necesită nicio permisiune, iar extensia nu citește filele deschise. Fila este deschisă lângă fila ContApp; pe portalul
-de declarații formularul de autentificare ANAF din ea este trimis automat o singură dată (vedeți scriptul de conținut
-de mai sus). Fila este închisă automat când autentificarea a reușit (fila a ajuns în portal sau la un răspuns SPV), ca
-să reveniți în ContApp; extensia o urmărește cel mult 5 minute și nu închide nicio altă filă. În Firefox, unde
-scripturile extensiilor nu rulează în vizualizatorul JSON, extensia cere ea însăși adresa SPV pe care s-a oprit fila
-de autentificare, o singură dată, și închide fila dacă ANAF răspunde; răspunsul nu este trimis paginii ContApp și nu
-este păstrat.
+necesită nicio permisiune. Fila este deschisă lângă fila ContApp; pe portalul de declarații formularul de
+autentificare ANAF din ea este trimis automat o singură dată (vedeți scriptul de conținut de mai sus). Fila este
+închisă automat când autentificarea s-a încheiat (fila a ajuns în portal sau la un răspuns SPV ori ANAF a refuzat
+autentificarea), ca să reveniți în ContApp; extensia o urmărește cel mult 5 minute și nu închide nicio altă filă.
+
+În Chrome și Edge extensia nu citește nicio filă. Numai în Firefox, unde scripturile extensiilor nu rulează în
+vizualizatorul JSON, extensia citește adresa filei de autentificare pe care a deschis-o ea însăși (prin evenimentul
+`tabs.onUpdated` și accesul la site, fără permisiunea „tabs”) și, după ce fila a încărcat o adresă care începe cu
+`https://webserviced.anaf.ro/SPVWS2/rest/`, cere ea însăși acea adresă, o dată la fiecare încărcare a paginii în acea
+filă, și închide fila dacă primește un răspuns SPV. Răspunsul este aruncat: nu este trimis paginii ContApp și nu este
+păstrat. Celelalte file sunt ignorate.
+
+Extensia nu rulează în ferestrele private (incognito).
 
 În Chrome și Edge 128 sau mai noi, dacă niciun certificat potrivit nu este disponibil când ANAF îl cere prima dată
 (tokenul nu este conectat, programul lui nu rulează), browserul reține că nu există certificat pentru acel site și
@@ -289,17 +295,24 @@ them too; ContApp is responsible for the scripts it includes. The source code is
 | Host access to `*://anaf.ro/*` | Used only for cookies: the browser lists a cookie set on `.anaf.ro` (which it also sends to `webserviced.anaf.ro`) to the extension, and lets it delete one, only with access to `anaf.ro`. The extension makes no requests to `anaf.ro`. |
 | Host access to `*://decl.anaf.mfinante.gov.ro/*` | Sends the PDF declaration you chose to file to ANAF's declaration filing portal and reads the portal's answer, which web pages cannot read directly. The extension only sends files (POST) to addresses starting with `https://decl.anaf.mfinante.gov.ro/WAS6DUS/` and only opens the login tab on the portal's start page, `https://decl.anaf.mfinante.gov.ro/`. When the portal's session is not known to be alive or has expired, the extension logs in by itself before filing, as ANAF's login page would: it opens the portal's start page and posts the login form (`POST https://decl.anaf.mfinante.gov.ro/my.policy` with its only field, `vhost=standard`); the browser uses the certificate already chosen for the portal in this browser session, and if none was chosen nothing is sent and ContApp asks you to log in. The extension does not read the content of these pages. The access covers `http://` only because the browser otherwise hides the portal's cookies without the Secure attribute from the extension; it makes no HTTP requests. |
 | Content script on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*` | Receives the ContApp page's requests and returns the answers. It does not run on any other site. |
-| Content script on `https://decl.anaf.mfinante.gov.ro/my.policy*`, `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*` and `https://webserviced.anaf.ro/SPVWS2/rest/*` | Only in the login tab the extension opened at ContApp's request: on the declaration portal it presses the ANAF login page's "Prezentare certificat" button once (if you cancel the certificate choice, the button is left to you); once the tab reaches the portal or an answer of the SPV service (JSON or PDF), it tells the extension to close it. In any other tab showing these addresses it only asks the extension whether the tab is one it opened, then does nothing. It reads only the displayed document's type (JSON, for example), not page content, and transmits nothing from the pages. |
+| Content script on `https://decl.anaf.mfinante.gov.ro/my.policy*`, `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*`, `https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*`, `https://webserviced.anaf.ro/SPVWS2/rest/*` and `https://webserviced.anaf.ro/vdesk/hangup.php3*` | Only in the login tab the extension opened at ContApp's request: on the declaration portal it presses the ANAF login page's "Prezentare certificat" button once (if you cancel the certificate choice, the button is left to you); once the tab reaches the portal or an answer of the SPV service (JSON or PDF), it tells the extension to close it. When the tab reaches the page on which ANAF refuses the login because the browser sent no certificate (`/vdesk/hangup.php3`), it tells the extension the login was refused, and the extension closes the tab it opened so ContApp can explain what to do. In any other tab showing these addresses it only asks the extension whether the tab is one it opened, then does nothing. It reads only the displayed document's type (JSON, for example), not page content, and transmits nothing from the pages. |
 | Cookies (`cookies`) | Deletes the cookies the browser sends to `webserviced.anaf.ro` or `decl.anaf.mfinante.gov.ro` before the ANAF login tab for that server opens, when its session no longer works, so a failed session cannot block a new login. It does not use, store or transmit cookie values and touches no other site. |
 
 To authenticate at ANAF, the extension opens a new tab on the SPV message list address or the declaration portal's
-start page so the browser can show the certificate picker and the PIN prompt; opening the tab needs no permission, and
-the extension does not read open tabs. The tab opens next to the ContApp tab; on the declaration portal the ANAF login
-form in it is submitted automatically once (see the content script above). The tab is closed automatically once the
-login succeeds (it reached the portal or an SPV answer), so you are back in ContApp; the extension watches it for at
-most 5 minutes and closes no other tab. In Firefox, where extensions' scripts do not run in the JSON viewer,
-the extension itself requests the SPV address the login tab stopped on, once, and closes the tab if ANAF answers; that
-answer is not passed to the ContApp page and is not kept.
+start page so the browser can show the certificate picker and the PIN prompt; opening the tab needs no permission. The
+tab opens next to the ContApp tab; on the declaration portal the ANAF login form in it is submitted automatically once
+(see the content script above). The tab is closed automatically once the login has ended (it reached the portal or an
+SPV answer, or ANAF refused the login), so you are back in ContApp; the extension watches it for at most 5 minutes and
+closes no other tab.
+
+In Chrome and Edge the extension reads no tab. In Firefox only, where extensions' scripts do not run in the JSON
+viewer, the extension reads the address of the login tab it opened itself (through the `tabs.onUpdated` event and its
+host access, without the "tabs" permission) and, once that tab has loaded an address under
+`https://webserviced.anaf.ro/SPVWS2/rest/`, requests that address itself, once per page load of that tab, and closes
+the tab on an SPV answer. The answer is discarded: it is not passed to the ContApp page and is not kept. Other tabs are
+ignored.
+
+The extension does not run in private (incognito) windows.
 
 In Chrome and Edge 128 and newer, if no matching certificate is available when ANAF first asks for one (token not
 plugged in, its software not running), the browser remembers that there is no certificate for that site and the login

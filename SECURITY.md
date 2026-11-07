@@ -21,5 +21,7 @@ The extension only forwards requests from ContApp pages: `fetch` to `https://web
 `upload` (the signed declaration) to `https://decl.anaf.mfinante.gov.ro/WAS6DUS/*`, returning the raw response. For
 the declaration portal it also logs in silently (`GET /`, `POST /my.policy`). A `login` deletes that host's ANAF
 cookies and opens the login tab, where the `login-tab.js` content script submits the portal's F5 form and reports
-when the login ended. Reports about the ContApp application itself go to the same address; reports about
-ANAF's service go to ANAF.
+when the login ended or was refused (F5's `/vdesk/hangup.php3` page on either host); the worker then closes that tab.
+In Firefox only, the worker also reads the login tab's address and requests an SPV address that tab loaded, once per
+page load, to close it (the answer is discarded). Reports about the ContApp application itself go to the same
+address; reports about ANAF's service go to ANAF.
