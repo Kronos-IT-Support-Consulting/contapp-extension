@@ -59,8 +59,11 @@ function forward({ type, url, field, filename, contentType, body }) {
 // One port per request, so closing it (the page cancels, or navigates away and takes this script with it) tells
 // the worker to abort the fetch.
 function relay(id, message) {
+    // An upload that fails here never reached the service worker, so the declaration was not sent.
+    const unsent = (payload) => (message?.type === "upload" ? { ...payload, sent: false } : payload);
+
     if (orphaned()) {
-        return Promise.resolve(detach());
+        return Promise.resolve(unsent(detach()));
     }
 
     return new Promise((resolve) => {
@@ -83,7 +86,7 @@ function relay(id, message) {
             port = chrome.runtime.connect({ name: CHANNEL });
         } catch (error) {
             console.debug("ContApp extension unreachable", error);
-            resolve(orphaned() ? detach() : { ok: false, error: "extension" });
+            resolve(unsent(orphaned() ? detach() : { ok: false, error: "extension" }));
 
             return;
         }
@@ -98,7 +101,7 @@ function relay(id, message) {
             port.postMessage(message);
         } catch (error) {
             console.debug("ContApp request could not be sent", error);
-            settle({ ok: false, error: "network", message: String(error?.message ?? error) });
+            settle(unsent({ ok: false, error: "network", message: String(error?.message ?? error) }));
         }
     });
 }

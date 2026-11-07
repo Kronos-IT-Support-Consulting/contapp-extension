@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- A failed `upload` carries `sent: false` when the declaration certainly never left the browser: the request did not
+  reach the service worker, its fields or the host permission were unusable, the silent login failed (whatever its
+  error), or F5 turned the POST away on its login or hangup page. Any other failure leaves the field out: the POST may
+  have reached the portal, so the page must not file again without checking. Older replies without the field read as
+  unknown, the safe side.
+
+### Changed
+
+- An upload's POST gets one more second per 64 KiB of file (64 KiB/s) before its response headers are due, on top of
+  the 90 s, so a slow uplink no longer ends a working upload in a `timeout` of unknown outcome.
+- The extension does not run in private windows (`"incognito": "not_allowed"`).
+- Only Firefox registers the `tabs.onUpdated` listener (filtered to SPV addresses): in Chrome it woke the service worker
+  on every tab update in the browser.
+
+### Security
+
+- URLs carrying a user name or password, or an encoded `%` or NUL in the path, are refused (`forbidden_url`).
+
 ### Changed
 
 - The repository is renamed `contapp-extension`, so the privacy policy now lives at

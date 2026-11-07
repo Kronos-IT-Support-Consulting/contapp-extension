@@ -78,6 +78,10 @@ advisory warning about the Android minimum version, which is expected.
 In Firefox, whose JSON viewer runs no content script, the worker requests the address the SPV login tab loaded and
 closes the tab on an SPV answer, so both login tabs close by themselves there too.
 
+The extension does not run in private (incognito) windows (`"incognito": "not_allowed"`): a private ContApp tab would
+share the service worker, and so the regular profile's ANAF session and cookie reset, while its login tab
+authenticated in the private window.
+
 Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
 service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
 `chrome.cookies` takes a `partitionKey`, which the login needs to clear partitioned ANAF cookies too.
@@ -116,6 +120,21 @@ page (`Succes depunere`, `Indexul este <b>…</b>`); the page reads the outcome 
 Fields that are not strings, an empty `field`, or a `body` that is not base64 answer `network` with a `message` and
 send nothing. An upload is not idempotent: after `cancelled` or `timeout` ANAF may still have registered the
 declaration, so check before sending it again rather than retrying blindly.
+
+A failed upload carries `sent: false` when the extension knows the declaration never left the browser, and only then:
+
+- the request never reached the service worker: the extension was reloaded or unreachable, or the message was too
+  large for the runtime port (the content script adds it);
+- the upload fields were unusable, or the portal's host permission is missing;
+- the silent login failed, whatever its error (`certificate_required`, `certificate_refused`, `session_lost`,
+  `timeout`, `cancelled`, `network`): it only talks to F5, before the POST;
+- F5 turned the POST away before the portal, landing on `/my.policy` (also after the one resend) or on its hangup page.
+
+Every other failure has no `sent` field and means the outcome is unknown: the POST may have reached the portal (a
+connection that broke after it, a landing outside `/WAS6DUS/` other than F5's pages, a timeout or cancel after the
+request left). A page may file again by itself only on `sent: false`; otherwise it should look the declaration up at
+ANAF first. An older extension never sends the field, which reads as unknown, the safe side. `fetch` replies never
+carry it.
 
 An upload logs in to the portal by itself when it can, the way the F5 page would: `GET https://decl.anaf.mfinante.gov.ro/`
 (which ends on `/my.policy` without a session) and `POST /my.policy` with `vhost=standard`, where the gateway asks for
@@ -157,7 +176,9 @@ replies are unchanged.
   portal's own pages are HTML, so the body under the prefix is not checked. No body is handed over. The page should
   offer the `login` action (for an upload, with the portal's URL).
 - `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
-  prompt that never showed, or the body did not finish within 5 minutes of the headers. The request is aborted so it
+  prompt that never showed, or the body did not finish within 5 minutes of the headers. An upload's POST gets one
+  more second per 64 KiB of file before its headers are due, since they only come after the whole file went up and
+  the portal processed it (a 10 MiB PDF: about 4.5 minutes). The request is aborted so it
   stops holding one of Chrome's six connections to the host. The page should offer the `login` action. In Firefox
   this is also the answer when the certificate's app is not running: Firefox waits for it instead of sending no
   certificate, and the next request works once the app runs, without a restart.
@@ -168,8 +189,9 @@ replies are unchanged.
   missing grant. The page should ask the user to grant site access.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the prefix the type
   accepts (so `…/SPVWS2/rest/../x` is refused), or its path still carries an encoded dot, slash or backslash or a `;`
-  path parameter, which the parser leaves alone but a server may resolve (`…/rest/..;/x`, `…/rest/..%2Fx`); the query
-  is not checked. The request and the login tab use the normalised URL.
+  path parameter, which the parser leaves alone but a server may resolve (`…/rest/..;/x`, `…/rest/..%2Fx`), or an
+  encoded `%` or NUL that a server could decode a second time (`%252e`, `%00`), or the URL carries a user name or
+  password; the query is not checked. The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
   response or upload too large to hand over (above 47 MiB; an upload whose base64 exceeds Chrome's 64 MiB message
   limit, a file above about 48 MiB, is refused by the content script with Chrome's own message before anything reaches
@@ -206,7 +228,9 @@ clicks the button and closes the tab by hand. ANAF opened any other way is left 
 the content script: the tab's URL alone cannot tell a JSON answer from the gateway's HTML page under the same prefix.
 Chrome's PDF viewer runs it; Firefox's JSON viewer and pdf.js do not, so in Firefox the worker watches the login tab
 instead: once it has loaded an address under the SPV REST API, the worker requests that address itself and closes the
-tab on an SPV answer (one extra request per login; the tab's URL is readable through the host permission alone).
+tab on an SPV answer (one extra request per login; the tab's URL is readable through the host permission alone). Only
+Firefox registers that `tabs.onUpdated` listener, filtered to SPV addresses and status changes: in Chrome it would
+wake the service worker on every tab update in the browser.
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 
