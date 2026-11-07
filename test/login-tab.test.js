@@ -73,6 +73,14 @@ test("reports a landing on the portal's pages and on SPV answers, and never subm
     }
 });
 
+test("reports F5's hangup page on either site as a refused login, and never submits there", async () => {
+    for (const hostname of [SPV, DECL]) {
+        const { sent, submits } = await loadScript(hostname, "/vdesk/hangup.php3", yes);
+
+        assert.deepEqual([sent, submits], [[{ type: "login-refused" }], 0], hostname);
+    }
+});
+
 test("says nothing on SPV's F5 pages or on a gateway page under the REST prefix", async () => {
     const silent = [
         [SPV, "/SPVWS2/rest/listaMesaje", "text/html"],

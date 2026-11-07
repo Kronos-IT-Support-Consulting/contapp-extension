@@ -106,7 +106,7 @@ made with the user's certificate, so nothing else is opened on the page's behalf
 | `{type:"upload", url, field, filename, contentType, body}` | the same as `fetch`: `{ok:true, status, url, body}` with ANAF's answer as an ArrayBuffer |
 | `{type:"login", url}` | `{ok:true, reset, message?}` after `chrome.tabs.create({url})`, or `{ok:false, error:"network", message}` if the tab cannot be opened |
 | `{type:"cancel", id}` | nothing; the pending request with that `id` answers `{ok:false, error:"cancelled"}` |
-| any | `{ok:false, error:"certificate_required"\|"session_lost"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"forbidden_origin"\|"network"\|"extension"\|"extension_reloaded"\|"unknown_type", message?}` |
+| any | `{ok:false, error:"certificate_required"\|"certificate_refused"\|"session_lost"\|"timeout"\|"cancelled"\|"permission"\|"forbidden_url"\|"forbidden_origin"\|"network"\|"extension"\|"extension_reloaded"\|"unknown_type", message?}` |
 
 `upload` POSTs a `multipart/form-data` body with one file part: `field` is the part's name (`linkdoc` for ANAF's
 `displayFile.do`), `filename` and `contentType` its file name and type, and `body` the file's bytes as a base64 string
@@ -141,6 +141,13 @@ replies are unchanged.
   certificate and no tab can show the picker (`ERR_SSL_CLIENT_AUTH_CERT_NEEDED`), but also for any other
   network-level failure while the browser is online (offline it is `network` with the message `offline`). The page
   should offer the `login` action.
+- `certificate_refused`: the request ended on F5's hangup page, `https://<host>/vdesk/hangup.php3`, which ANAF
+  shows as *Certificatul nu a fost prezentat*: the browser sent no client certificate. Chrome does that without a
+  picker when the operating system offers none (the cloud certificate's app is not running, the token is not plugged
+  in), and also after the user closes the picker; either way it remembers "no certificate" for the host until the
+  browser quits, so neither a `login` nor clearing cookies helps. Nothing reached the SPV API or the portal (an upload
+  was not filed). For an upload, `message` carries the hangup URL like `session_lost` does. The page should tell the
+  user to start the certificate's app or plug in the token, quit the browser completely and log in again.
 - `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
   `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
   answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). For `upload`, the request ended
@@ -185,7 +192,10 @@ A `login` opens its tab next to the ContApp tab (`openerTabId`), so closing it b
 - once the tab reaches `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`, or an SPV answer under
   `https://webserviced.anaf.ro/SPVWS2/rest/` served as JSON or PDF (not F5's `/my.policy`, `/vdesk/…` or `/public/…`
   pages, nor its HTML page under the prefix), tells the worker, which closes the tab and counts that host's session as
-  alive.
+  alive;
+- once the tab lands on F5's hangup page (`/vdesk/hangup.php3` on the same host, *Certificatul nu a fost prezentat*),
+  tells the worker, which closes the tab and keeps the session lost: ContApp's next request answers
+  `certificate_refused` and explains what to do.
 
 The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it restarted, the user
 clicks the button and closes the tab by hand. ANAF opened any other way is left alone. Detecting the SPV answer needs

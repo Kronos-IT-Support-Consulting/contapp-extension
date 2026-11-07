@@ -217,7 +217,9 @@ test("the hosts the worker fetches from are the ones the manifest asks permissio
         [
             "https://decl.anaf.mfinante.gov.ro/my.policy*",
             "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*",
+            "https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*",
             "https://webserviced.anaf.ro/SPVWS2/rest/*",
+            "https://webserviced.anaf.ro/vdesk/hangup.php3*",
         ],
         "the login helper runs only on the portal's F5 form and the pages a login ends on",
     );
@@ -731,6 +733,35 @@ test("a fetch that ends outside the SPV REST API is a lost session, and its body
     }
 });
 
+test("a fetch F5 ends on its hangup page is a refused certificate, not a lost session", async () => {
+    const hangup = "https://webserviced.anaf.ro/vdesk/hangup.php3";
+    const cases = [
+        [hangup, "certificate_refused"],
+        [`${hangup}?errorcode=1`, "certificate_refused"],
+        ["https://webserviced.anaf.ro/vdesk/other.php3", "session_lost"],
+        ["https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3", "session_lost"],
+        ["http://webserviced.anaf.ro/vdesk/hangup.php3", "session_lost"],
+    ];
+
+    for (const [url, error] of cases) {
+        let read = false;
+        const { send } = loadBackground(async () => ({
+            status: 200,
+            url,
+            body: { cancel: async () => {} },
+            arrayBuffer: async () => {
+                read = true;
+
+                return new ArrayBuffer(0);
+            },
+        }));
+
+        assert.deepEqual(await send({ type: "fetch", url: ANAF_URL }), { ok: false, error }, url);
+        assert.equal(read, false, url);
+        assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, `${url}: still a lost session`);
+    }
+});
+
 test("a gateway page under the prefix is a lost session, an HTTP error with any body is the page's business", async () => {
     const text = (body) => new TextEncoder().encode(body);
     const replies = [
@@ -913,6 +944,7 @@ test("without a known live session the upload logs in silently first, and sends 
         ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/?a=b"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/" }, [GET_HOME]],
         ["the portal moved", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}WAS7DUS/`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/` }, [GET_HOME, POST_POLICY]],
         ["the gateway fails", throwing("Error", "boom"), { ok: false, error: "network", message: "boom" }, [GET_HOME]],
+        ["F5 hangs up: no certificate was sent", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}vdesk/hangup.php3?x`), { ok: false, error: "certificate_refused", message: `${DECL_HOME}vdesk/hangup.php3` }, [GET_HOME, POST_POLICY]],
     ];
 
     for (const [name, impl, expected, calls, options] of cases) {
@@ -1079,6 +1111,35 @@ test("the login tab closes once it reaches the portal, only if it is ours, and t
     assert.deepEqual(removedTabs, [101], "forgotten once closed");
     assert.deepEqual(tell({ type: "login-form" }, 101, POLICY), { submit: false });
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
+});
+
+test("a login tab F5 hangs up on closes, only if it is ours and on its own site's hangup page, and the session stays lost", async () => {
+    const { send, tell, removedTabs } = loadBackground(respond(200, new TextEncoder().encode("<html>F5</html>")));
+    const refused = { type: "login-refused" };
+    const SPV_HANGUP = "https://webserviced.anaf.ro/vdesk/hangup.php3";
+    const DECL_HANGUP = `${DECL_HOME}vdesk/hangup.php3`;
+
+    await send({ type: "fetch", url: ANAF_URL });
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    await send({ type: "login", url: DECL_HOME }); // tab 102
+
+    const notClosed = [
+        ["a tab the user opened", 55, SPV_HANGUP],
+        ["another extension", 101, SPV_HANGUP, "other-extension"],
+        ["another F5 page", 101, "https://webserviced.anaf.ro/my.policy"],
+        ["the portal's hangup page, from the SPV tab", 101, DECL_HANGUP],
+        ["over http", 101, "http://webserviced.anaf.ro/vdesk/hangup.php3"],
+        ["an SPV answer reported as refused", 101, ANAF_URL],
+    ];
+    for (const [name, tabId, url, id] of notClosed) {
+        tell(refused, tabId, url, id);
+        assert.deepEqual(removedTabs, [], name);
+    }
+
+    tell(refused, 101, `${SPV_HANGUP}?x`);
+    tell(refused, 102, DECL_HANGUP);
+    assert.deepEqual(removedTabs, [101, 102]);
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }, "a refused login is no session");
 });
 
 test("the SPV login tab closes once it lands on an SPV REST answer, only if it is ours, never on F5's pages", async () => {

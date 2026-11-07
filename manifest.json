@@ -25,7 +25,9 @@
             "matches": [
                 "https://decl.anaf.mfinante.gov.ro/my.policy*",
                 "https://decl.anaf.mfinante.gov.ro/WAS6DUS/*",
-                "https://webserviced.anaf.ro/SPVWS2/rest/*"
+                "https://decl.anaf.mfinante.gov.ro/vdesk/hangup.php3*",
+                "https://webserviced.anaf.ro/SPVWS2/rest/*",
+                "https://webserviced.anaf.ro/vdesk/hangup.php3*"
             ],
             "js": ["login-tab.js"],
             "run_at": "document_idle"

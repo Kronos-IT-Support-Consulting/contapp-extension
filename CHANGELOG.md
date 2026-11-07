@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- A request that F5 ends on its hangup page (`/vdesk/hangup.php3`, *Certificatul nu a fost prezentat*) answers the new
+  error `certificate_refused` instead of `session_lost`. The browser sent no client certificate: the certificate's
+  app was not running or the token was unplugged when ANAF asked (Chrome then sends none without a picker), or the
+  picker was closed. Chrome remembers that until it quits, so a login cannot help and the page should say so.
+- A login tab that lands on that hangup page closes, and the session stays lost.
 - Tests cover slot accounting after a hand-off, the in-flight set, foreign port names, the login tab's expiry timer,
   the oversized message and Chrome's `browser` namespace.
 

@@ -42,6 +42,12 @@ const BODY_TIMEOUT_MS = 5 * 60_000;
 const TIMED_OUT = "timeout";
 const CANCELLED = "cancelled";
 const SESSION_LOST = "session_lost";
+// F5 ends a login it refuses on its hangup page ("Certificatul nu a fost prezentat"): the browser sent no
+// certificate, because the certificate's software or token was not available when ANAF asked (Chrome then sends none
+// without a prompt) or the user closed the certificate picker. Chrome keeps that answer for the host until it quits,
+// so a login cannot help; nothing reached the site either.
+const CERTIFICATE_REFUSED = "certificate_refused";
+const HANGUP_PATH = "/vdesk/hangup.php3";
 const PORT_NAME = "contapp-spv";
 // How long a login tab is watched, so the declaration portal's F5 form can be submitted and the tab closed once it
 // reaches the site's answer; the worker is kept alive for it, since the tab is only known in memory.
@@ -102,11 +108,18 @@ function withoutQuery(url) {
     }
 }
 
-// A lost session, saying where the site's requests ended when it reports that.
+// A lost session, saying where the site's requests ended when it reports that. F5's hangup page means no certificate
+// was presented, which only restarting the browser with the certificate available fixes.
 function sessionLost(target, url) {
     const landing = target.reportsLanding ? withoutQuery(url) : undefined;
+    const error = isHangup(target, url) ? CERTIFICATE_REFUSED : SESSION_LOST;
 
-    return { ok: false, error: SESSION_LOST, ...(landing && { message: landing }) };
+    return { ok: false, error, ...(landing && { message: landing }) };
+}
+
+// Whether the URL is F5's hangup page on the site's own host.
+function isHangup(target, url) {
+    return typeof url === "string" && withoutQuery(url) === `https://${target.host}${HANGUP_PATH}`;
 }
 
 // Whether the URL is F5's login page, minus its query.
@@ -565,9 +578,13 @@ function onLoginTabMessage(message, sender) {
         return { submit: true };
     }
 
-    if (message?.type === "login-landed" && allowedUrl(sender.url, tab.target.api)) {
+    const landed = message?.type === "login-landed" && allowedUrl(sender.url, tab.target.api);
+    // F5 refused the login: ContApp explains why once the user is back, which closing the tab brings about.
+    const refused = message?.type === "login-refused" && isHangup(tab.target, sender.url);
+
+    if (landed || refused) {
         forgetLoginTab(tabId);
-        tab.target.sessionAlive = true;
+        tab.target.sessionAlive = landed;
         chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp SPV could not close the login tab", error));
     }
 
