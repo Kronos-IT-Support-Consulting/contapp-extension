@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.3.2] — 2026-11-07
+
+Released as a patch, although the `sent` field is an addition that would normally have made it 2.4.0; nothing reads
+the version number, and a missing field reads as unknown, so older extensions stay on the safe side.
+
 ### Added
 
 - A failed `upload` carries `sent: false` when the declaration certainly never left the browser: the request did not
@@ -21,10 +26,6 @@ All notable changes to this project are documented here. The format is based on
 - The extension does not run in private windows (`"incognito": "not_allowed"`).
 - Only Firefox registers the `tabs.onUpdated` listener (filtered to SPV addresses): in Chrome it woke the service worker
   on every tab update in the browser.
-- The repository is renamed `contapp-extension`, so the privacy policy now lives at
-  `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY`; the old GitHub Pages address no
-  longer answers, so each store's privacy-policy field needs the new one. Links in the docs point at the new name.
-- The README's walkthrough, error list, spike findings and known limitations describe 2.3.0's behaviour.
 - The README walkthrough asks to start the certificate's app before the first *Verifică*, describes Firefox's 90 s
   wait when that app is closed, names the session-lost toast for an expired session and adds the filing and
   outcome-unknown (*Caută la ANAF*) steps. It and the known limitations no longer list a wrong PIN as a cause of the
@@ -45,6 +46,16 @@ All notable changes to this project are documented here. The format is based on
   a refused login is reported and the extension closes the login tab it opened; that only Firefox reads the address
   of that login tab and requests an SPV address it loaded once per page load (the answer is discarded), while Chrome
   and Edge read no tab; and that the extension does not run in private windows.
+
+
+## [2.3.1] — 2026-11-07
+
+### Changed
+
+- The repository is renamed `contapp-extension`, so the privacy policy now lives at
+  `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY`; the old GitHub Pages address no
+  longer answers, so each store's privacy-policy field needs the new one. Links in the docs point at the new name.
+- The README's walkthrough, error list, spike findings and known limitations describe 2.3.0's behaviour.
 
 ## [2.3.0] — 2026-11-07
 
@@ -259,7 +270,9 @@ First standalone release, moved out of the ContApp application repository.
   `forbidden_url`.
 - Chrome/Edge and Firefox builds, zipped by `build.sh` and attached to each GitHub release.
 
-[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.3.2...HEAD
+[2.3.2]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.3.1...v2.3.2
+[2.3.1]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.0.0...v2.1.0
