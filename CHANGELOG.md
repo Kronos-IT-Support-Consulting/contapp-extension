@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- The repository is renamed `contapp-extension`, so the privacy policy now lives at
+  `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY`; the old GitHub Pages address no
+  longer answers, so each store's privacy-policy field needs the new one. Links in the docs point at the new name.
+- The README's walkthrough, error list, spike findings and known limitations describe 2.3.0's behaviour.
+
+## [2.3.0] — 2026-11-07
+
 ### Added
 
 - A request that F5 ends on its hangup page (`/vdesk/hangup.php3`, *Certificatul nu a fost prezentat*) answers the new
@@ -222,13 +231,14 @@ First standalone release, moved out of the ContApp application repository.
   `forbidden_url`.
 - Chrome/Edge and Firefox builds, zipped by `build.sh` and attached to each GitHub release.
 
-[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v2.2.0...HEAD
-[2.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.5.0...v2.0.0
-[1.5.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/tag/v1.0.0
+[Unreleased]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v1.5.0...v2.0.0
+[1.5.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/Kronos-IT-Support-Consulting/contapp-extension/releases/tag/v1.0.0

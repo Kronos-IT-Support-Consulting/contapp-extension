@@ -13,7 +13,7 @@ only ships new versions; these texts change only when edited here.
 | Homepage | `https://contapp.ro`                                                           |
 | Support URL | `https://contapp.ro/contact`                                                   |
 | Support e-mail | `suport@contapp.ro`                                                            |
-| Privacy policy URL | `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
+| Privacy policy URL | `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY` |
 | Visibility | Chrome: *Unlisted* · Edge: *Hidden* · Firefox: unlisted / self-distributed     |
 
 ### Short description
@@ -175,7 +175,7 @@ Certifications, all three ticked:
 - I do not use or transfer user data for purposes that are unrelated to my item's single purpose.
 - I do not use or transfer user data to determine creditworthiness or for lending purposes.
 
-Privacy policy URL: `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY`
+Privacy policy URL: `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY`
 
 ### Notes for the reviewer
 
@@ -203,7 +203,7 @@ Same package as Chrome (`contapp-spv-chrome-<version>.zip`). Fields Partner Cent
 | Availability | Visibility | **Hidden** (install only by direct link) |
 | Availability | Markets | All markets (Romania is the only one that matters) |
 | Properties | Category | Productivity |
-| Properties | Privacy policy required | Yes → `https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY` |
+| Properties | Privacy policy required | Yes → `https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY` |
 | Properties | Website URL | `https://contapp.ro` |
 | Properties | Support contact | `suport@contapp.ro` (or the support URL above) |
 | Properties | Mature content | No |
@@ -225,7 +225,7 @@ If AMO asks for review notes or source code:
 ```
 The ContApp extension is a companion extension for ContApp (https://contapp.ro), a Romanian online accounting application. It relays requests from ContApp pages to ANAF's SPV web service (https://webserviced.anaf.ro/SPVWS2/rest/), and the signed PDF declarations the user chooses to file to ANAF's declaration portal (https://decl.anaf.mfinante.gov.ro/WAS6DUS/), so the browser can authenticate with the user's client certificate, and returns the raw response to the ContApp page. It stores nothing itself; because the relayed SPV responses carry the certificate holder's CNP, CUIs and tax documents, and filed declarations carry tax and personal data, which the ContApp page then stores in the user's account, the manifest declares data_collection_permissions.required = [personallyIdentifyingInfo, financialAndPaymentInfo] (Firefox 140+ shows this in the install prompt).
 
-Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js, login-tab.js and the PNG icons into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration, and without the local contapp.test entries the source manifest's content_scripts[0].matches keeps for development). To reproduce: ./build.sh (requires jq and zip). In Firefox the JSON answer opens in Firefox's viewer, where content scripts do not run, so the service worker closes the SPV login tab after requesting the address the tab loaded once itself (tabs.onUpdated; the tab URL is readable through the host permission, no "tabs" permission); the declaration portal's tab is closed as in Chrome.
+Source: https://github.com/Kronos-IT-Support-Consulting/contapp-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js, login-tab.js and the PNG icons into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration, and without the local contapp.test entries the source manifest's content_scripts[0].matches keeps for development). To reproduce: ./build.sh (requires jq and zip). In Firefox the JSON answer opens in Firefox's viewer, where content scripts do not run, so the service worker closes the SPV login tab after requesting the address the tab loaded once itself (tabs.onUpdated; the tab URL is readable through the host permission, no "tabs" permission); the declaration portal's tab is closed as in Chrome.
 
 Testing end to end needs a ContApp account and a Romanian qualified certificate with SPV access; a screencast is available on request at suport@contapp.ro.
 ```
