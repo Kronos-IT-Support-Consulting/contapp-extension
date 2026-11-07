@@ -1,7 +1,7 @@
 # ContApp browser extension
 
-[![CI](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Kronos-IT-Support-Consulting/contapp-spv-extension)](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/latest)
+[![CI](https://github.com/Kronos-IT-Support-Consulting/contapp-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronos-IT-Support-Consulting/contapp-extension/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Kronos-IT-Support-Consulting/contapp-extension)](https://github.com/Kronos-IT-Support-Consulting/contapp-extension/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Lets [ContApp](https://contapp.ro) use ANAF's certificate-only services, reading SPV messages and filing
@@ -24,7 +24,7 @@ See [PRIVACY.md](PRIVACY.md).
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3, Chrome/Edge shaped. Its `version` is stamped from the release tag by the workflow; the `1.0.0` in the repository only matters for load-unpacked development. |
-| `background.js` | Service worker: validates the URL, fetches it, returns status/url/base64 body. |
+| `background.js` | Service worker: validates the URL, fetches it (or uploads the declaration), returns status/url/base64 body; opens and closes the login tabs and clears a lost ANAF session's cookies. |
 | `content.js` | Injected into ContApp pages; bridges `window.postMessage` to the service worker. |
 | `login-tab.js` | Injected into the declaration portal's F5 form and pages and into SPV REST answers; in a login tab the extension opened, submits the portal's F5 form once and reports when the login ended, so the worker closes the tab. |
 | `icons/` | 16/48/128 PNG icons, plus the SVG sources they are rendered from. |
@@ -46,7 +46,7 @@ Not published yet. The listing will be unlisted; the install link will be shown 
 ### From a GitHub release (Chrome / Edge)
 
 1. Download `contapp-spv-chrome-<version>.zip` from the
-   [latest release](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension/releases/latest)
+   [latest release](https://github.com/Kronos-IT-Support-Consulting/contapp-extension/releases/latest)
    and unzip it into a folder you will keep.
 2. Open `chrome://extensions` (Edge: `edge://extensions`).
 3. Enable **Developer mode**.
@@ -147,7 +147,9 @@ replies are unchanged.
   in), and also after the user closes the picker; either way it remembers "no certificate" for the host until the
   browser quits, so neither a `login` nor clearing cookies helps. Nothing reached the SPV API or the portal (an upload
   was not filed). For an upload, `message` carries the hangup URL like `session_lost` does. The page should tell the
-  user to start the certificate's app or plug in the token, quit the browser completely and log in again.
+  user to start the certificate's app or plug in the token, quit the browser completely and log in again. Firefox
+  behaves the same way after the user cancels its certificate dialog with *Remember this decision* ticked (the
+  default); a restart clears that too.
 - `session_lost`: ANAF answered, but not as the SPV REST API: the request was redirected out of
   `https://webserviced.anaf.ro/SPVWS2/rest/` (to F5's login pages, or to anything over `http://`), or a `2xx`/`3xx`
   answer under the prefix was neither JSON nor a PDF (the gateway's own HTML page). For `upload`, the request ended
@@ -156,7 +158,9 @@ replies are unchanged.
   offer the `login` action (for an upload, with the portal's URL).
 - `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
   prompt that never showed, or the body did not finish within 5 minutes of the headers. The request is aborted so it
-  stops holding one of Chrome's six connections to the host. The page should offer the `login` action.
+  stops holding one of Chrome's six connections to the host. The page should offer the `login` action. In Firefox
+  this is also the answer when the certificate's app is not running: Firefox waits for it instead of sending no
+  certificate, and the next request works once the app runs, without a restart.
 - `cancelled`: a `login` reset the lost session while this fetch was in flight or queued, or the page sent `cancel`
   for it. After a login it is not a failure to show: run the request again once the user is back from the login tab.
 - `permission`: the extension has no access to `webserviced.anaf.ro`, or for `upload` to
@@ -258,20 +262,23 @@ to reach SPV, so any change to the message shapes above must ship in both reposi
    choose the SPV certificate, then the token asks for its PIN. The tab ends on a raw JSON page (either
    a message list or `{"eroare":…}`). That JSON *is* the success: the browser now holds the ANAF
    session cookie and remembers the certificate for this host. The extension closes the tab by itself and
-   ContApp comes back (in Firefox the JSON opens in Firefox's viewer, where the extension's script does not run, so
-   close the tab yourself).
+   ContApp comes back, in Firefox too.
    If the tab shows an F5 `/my.policy` page instead, wait for it to redirect; if it stays blank, reload it once.
-   If no picker shows at all: Chrome and Edge 128+ remember "no certificate" for a site when none was available
-   the first time ANAF asked (token not plugged in, middleware not running), until the browser is closed completely
-   (every window) and reopened. Plug the token in before the first **Autentificare ANAF**.
-4. **Verify again** — back in ContApp, click **Verifică**. A success toast *Certificat valid pentru CNP …,
-   cu acces la N CUI-uri* appears and the page fills in *CNP titular*, *Serie certificat* and *CUI-uri acces*.
-5. **Sync the inbox** — sidebar *Declarații* → *Mesaje SPV* → **Sincronizează SPV**. The toast reports
-   how many messages were created, updated and skipped, and the table lists the messages whose CIF matches
-   the current company. Messages for CUIs that are not a ContApp company count as *ignorate*.
-6. **Download a message** — click the download icon on a row. The extension fetches the PDF from
-   `descarcare?id=<anaf id>`, ContApp stores it, the row flips to *Descărcat* and the PDF opens in a new
-   tab. From then on the icon links straight to the stored file, with no ANAF round trip.
+   If no picker shows at all, or the certificate's app was closed or the PIN or code was wrong, ContApp shows
+   *ANAF nu a primit certificatul*: the browser sent no certificate and remembers that until it quits. Start the
+   certificate's app (or plug in the token), quit the browser completely (on a Mac, Cmd+Q) and log in again. Start the
+   app before the first **Autentificare ANAF** and do not close the picker.
+   In Firefox the first **Verifică** usually needs no login tab: Firefox shows its own certificate dialog for the
+   extension's request, then the PIN or code.
+4. **Back in ContApp** — the check runs again by itself once the login tab closes (or click **Verifică**). A
+   success toast *Certificat valid pentru CNP …, cu acces la N CUI-uri* appears and the page fills in
+   *CNP titular*, *Serie certificat* and *CUI-uri acces*.
+5. **Sync the inbox** — sidebar *Declarații ANAF* → *Admin ANAF* → tab *Mesaje SPV* → **Sincronizează SPV**. The
+   toast reports how many messages were created, updated and skipped, and the table lists the messages whose CIF
+   matches the current company. Messages for CUIs that are not a ContApp company count as *ignorate*.
+6. **Downloads** — the sync then fetches the PDF of every message ContApp does not hold yet from
+   `descarcare?id=<anaf id>` and stores it; the row shows *Descărcat* and its eye button opens the stored PDF with
+   no ANAF round trip. A message whose download failed is fetched again by the next sync.
 7. **Session expiry** — when ANAF drops the session (toast *ANAF a cerut certificatul…* again), repeat
    steps 3 and 4. Nothing is lost; synced messages and downloaded PDFs stay in ContApp.
 8. **Request a document** — on *Mesaje SPV* click **Cerere nouă**, pick a type (e.g. *D300*) and fill only
@@ -319,7 +326,9 @@ session, the service worker in `chrome://extensions` showing *inactive* between 
 First run: 2026-10-13, Chrome on Windows, USB token, against staging (the real page flow, not the DevTools spike).
 
 - [x] (1) A service-worker `fetch` succeeds after authenticating once in the login tab: yes — *Sincronizează SPV* listed the inbox.
-- [ ] (2) The certificate selection survives closing the login tab: not checked yet.
+- [x] (2) The certificate selection survives closing the login tab: yes (2026-11-07, Chrome for Testing 156, Edge
+  157 and Firefox 158 on macOS, cloud certificate). The same run showed how a missing certificate behaves, which
+  2.3.0 reports as `certificate_refused`.
 - [ ] (3) When ANAF's F5 session (`MRHSession`) expires (idle / absolute, observed time): not observed yet.
 - [x] (4) Chrome accepts the manifest as shipped (no errors/warnings on `chrome://extensions`): yes, loaded unpacked.
 
@@ -437,7 +446,7 @@ from other stores), so the Edge listing below is optional.
 
 ## Store checklist
 
-- [x] Privacy policy: [PRIVACY.md](PRIVACY.md), served by GitHub Pages at <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>.
+- [x] Privacy policy: [PRIVACY.md](PRIVACY.md), served by GitHub Pages at <https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY>.
 - [ ] Chrome Web Store listing as **unlisted**, single-purpose description, justification for the
       `webserviced.anaf.ro`, `anaf.ro` and `decl.anaf.mfinante.gov.ro` host permissions and the two content scripts
       (texts in [store/listing.md](store/listing.md)), data-usage disclosure matching the privacy policy.
@@ -451,7 +460,7 @@ from other stores), so the Edge listing below is optional.
   Center and (if asked) AMO forms: descriptions, single purpose, permission justifications, data-usage answers,
   reviewer notes and the assets checklist.
 - [PRIVACY.md](PRIVACY.md): the privacy policy (Romanian, then English), published by GitHub Pages at
-  <https://kronos-it-support-consulting.github.io/contapp-spv-extension/PRIVACY>; that URL goes into every store's privacy-policy field.
+  <https://kronos-it-support-consulting.github.io/contapp-extension/PRIVACY>; that URL goes into every store's privacy-policy field.
 - [store/screenshots/](store/screenshots/): the 1280×800 store screenshots listed in `store/listing.md`.
 - GitHub Pages is configured in the repository settings (branch `main`, folder `/`), not in a workflow;
   `_config.yml` keeps the scripts and tests out of the published site.
@@ -463,3 +472,7 @@ from other stores), so the Edge listing below is optional.
   pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.
 - In Firefox the SPV login tab closes after one extra request: the worker asks for the address the tab loaded, since
   Firefox's JSON viewer runs no content script.
+- When ANAF asks for the certificate while the browser has none to offer (the certificate's app closed, the token
+  unplugged, a wrong PIN or code, a cancelled picker), Chrome and Edge remember "no certificate" for the host until
+  they quit, and no extension API can clear that: the user has to quit the browser. ContApp says so when the
+  extension answers `certificate_refused`.

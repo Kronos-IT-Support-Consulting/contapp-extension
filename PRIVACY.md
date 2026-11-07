@@ -112,7 +112,7 @@ extensia nu citește răspunsul și nu îl transmite paginii. Extensia acceptă 
 ContApp (`account`, `contabilitate` și `declaratiaunica`.contapp.ro) și numai pentru adrese din serviciul SPV al ANAF
 și, pentru depunere, din `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`. Răspunsurile ajung la pagina ContApp care le-a cerut, unde le pot vedea și scripturile
 încărcate de acea pagină; ContApp răspunde pentru scripturile pe care le include. Codul sursă
-este public, la [github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension).
+este public, la [github.com/Kronos-IT-Support-Consulting/contapp-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-extension).
 
 ## 8. Permisiunile extensiei
 
@@ -279,7 +279,7 @@ reads the response nor passes it to the page. The extension only accepts request
 (`account`, `contabilitate` and `declaratiaunica`.contapp.ro) and only for addresses in ANAF's SPV service and, for
 filings, under `https://decl.anaf.mfinante.gov.ro/WAS6DUS/`. Answers go to the ContApp page that asked, where scripts that page loads can see
 them too; ContApp is responsible for the scripts it includes. The source code is public at
-[github.com/Kronos-IT-Support-Consulting/contapp-spv-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension).
+[github.com/Kronos-IT-Support-Consulting/contapp-extension](https://github.com/Kronos-IT-Support-Consulting/contapp-extension).
 
 ## 8. Extension permissions
 

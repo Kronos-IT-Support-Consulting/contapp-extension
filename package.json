@@ -1,5 +1,5 @@
 {
-    "name": "contapp-spv-extension",
+    "name": "contapp-extension",
     "version": "1.0.0",
     "private": true,
     "description": "Browser extension that lets ContApp use ANAF services (SPV messages, declaration filing) with the certificate held by the browser.",
