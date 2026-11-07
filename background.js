@@ -187,8 +187,9 @@ function fromContApp(sender) {
 
     const { hostname } = url;
 
+    // Chrome lists the scripts as written in the manifest, Firefox as moz-extension:// URLs.
     return chrome.runtime.getManifest().content_scripts
-        .filter(({ js }) => js.includes("content.js"))
+        .filter(({ js }) => js.some((file) => file === "content.js" || file.endsWith("/content.js")))
         .flatMap(({ matches }) => matches)
         .some((pattern) => {
             const host = pattern.match(/^https:\/\/([^/]+)\/\*$/)?.[1];
@@ -464,9 +465,12 @@ async function proxyUpload(url, message, controller) {
 // has: runtime.getBrowserInfo.
 function cookieQuery(target) {
     const query = { domain: target.cookieDomain, partitionKey: {} };
-    const firefox = typeof chrome.runtime.getBrowserInfo === "function";
 
-    return firefox ? { ...query, firstPartyDomain: null } : query;
+    return isFirefox() ? { ...query, firstPartyDomain: null } : query;
+}
+
+function isFirefox() {
+    return typeof chrome.runtime.getBrowserInfo === "function";
 }
 
 // The browser sends the host its own cookies and those set on a parent domain such as .anaf.ro.
@@ -591,6 +595,27 @@ function onLoginTabMessage(message, sender) {
     return { submit: false };
 }
 
+// Firefox runs no content script in its JSON viewer or in pdf.js, so login-tab.js never reports an SPV answer there.
+// Once a login tab has loaded an address under the SPV REST API, the worker asks for it itself: an SPV answer means the
+// login worked, and the tab closes as it does in Chrome. The tab's URL is readable through the host permission alone.
+async function onLoginTabUpdated(tabId, { status } = {}, tab) {
+    const watched = loginTabs.get(tabId);
+    const url = allowedUrl(tab?.url, SPV.api);
+
+    if (!isFirefox() || watched?.target !== SPV || status !== "complete" || !url || watched.probing) {
+        return;
+    }
+
+    watched.probing = true;
+    const reply = await proxyFetch(SPV, url, new AbortController());
+    watched.probing = false;
+
+    if (reply.ok && !(reply.status >= 400) && loginTabs.get(tabId) === watched) {
+        forgetLoginTab(tabId);
+        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp SPV could not close the login tab", error));
+    }
+}
+
 async function handle(message, controller, sender) {
     const forbidden = { ok: false, error: "forbidden_url" };
 
@@ -657,3 +682,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(onLoginTabMessage(message, sender));
 });
 chrome.tabs.onRemoved.addListener(forgetLoginTab);
+chrome.tabs.onUpdated.addListener(onLoginTabUpdated);

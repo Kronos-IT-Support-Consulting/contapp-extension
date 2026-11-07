@@ -200,8 +200,9 @@ A `login` opens its tab next to the ContApp tab (`openerTabId`), so closing it b
 The worker watches the tab for at most 5 minutes, staying awake meanwhile; after that, or if it restarted, the user
 clicks the button and closes the tab by hand. ANAF opened any other way is left alone. Detecting the SPV answer needs
 the content script: the tab's URL alone cannot tell a JSON answer from the gateway's HTML page under the same prefix.
-Chrome's PDF viewer runs it; Firefox's JSON viewer and pdf.js do not, so in Firefox the SPV login tab stays open until
-the user closes it (the portal's tab closes there too).
+Chrome's PDF viewer runs it; Firefox's JSON viewer and pdf.js do not, so in Firefox the worker watches the login tab
+instead: once it has loaded an address under the SPV REST API, the worker requests that address itself and closes the
+tab on an SPV answer (one extra request per login; the tab's URL is readable through the host permission alone).
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 

@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Firefox: every request answered `forbidden_origin` since 2.1.0. Firefox lists content scripts in `getManifest()` as
+  `moz-extension://` URLs, so the check for the ContApp hosts found no `content.js` entry and refused every page.
+- Firefox: the SPV login tab now closes by itself. Firefox runs no content script in its JSON viewer, so once the tab
+  has loaded an address under the SPV REST API the worker asks for it itself and closes the tab on an SPV answer.
 - The login's cookie reset works again on Chrome and Edge 148 and newer, which also expose a `browser` namespace; the
   extension used it to tell Firefox apart and sent Firefox's cookie query to Chrome, so every login answered
   `reset: "failed"` and cleared nothing (since 2.2.0; Firefox is now detected by `runtime.getBrowserInfo`).

@@ -50,6 +50,7 @@ function loadBackground(fetchImpl, {
     let onConnect;
     let onMessage;
     let onTabRemoved;
+    let onTabUpdated;
 
     // Chrome's error text, for a cookie query shaped for Firefox.
     const unexpected = (method, details) => {
@@ -60,7 +61,13 @@ function loadBackground(fetchImpl, {
     const chromeApi = {
         runtime: {
             id: EXTENSION_ID,
-            getManifest: () => ({ version: "9.8.7", content_scripts: manifest.content_scripts }),
+            // Firefox lists the content scripts as moz-extension:// URLs, Chrome as written in the manifest.
+            getManifest: () => ({
+                version: "9.8.7",
+                content_scripts: firefox
+                    ? manifest.content_scripts.map((entry) => ({ ...entry, js: entry.js.map((file) => `moz-extension://0d1f/${file}`) }))
+                    : manifest.content_scripts,
+            }),
             getPlatformInfo: async () => keepAlives++,
             onConnect: { addListener: (callback) => (onConnect = callback) },
             onMessage: { addListener: (callback) => (onMessage = callback) },
@@ -76,6 +83,7 @@ function loadBackground(fetchImpl, {
             }),
             remove: async (tabId) => removedTabs.push(tabId),
             onRemoved: { addListener: (callback) => (onTabRemoved = callback) },
+            onUpdated: { addListener: (callback) => (onTabUpdated = callback) },
         },
         cookies: {
             getAll: async (query) => {
@@ -177,7 +185,7 @@ function loadBackground(fetchImpl, {
     };
 
     return {
-        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), updateTab: (tabId, changeInfo, tab) => onTabUpdated(tabId, changeInfo, tab), removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
         keepAlives: () => keepAlives, debug, warnings, state, IDLE,
     };
 }
@@ -197,7 +205,7 @@ test("ping answers the manifest version", async () => {
 
 test("the hosts the worker fetches from are the ones the manifest asks permission for", () => {
     const listener = { addListener() {} };
-    const context = vm.createContext({ chrome: { runtime: { onConnect: listener, onMessage: listener }, tabs: { onRemoved: listener } }, URL });
+    const context = vm.createContext({ chrome: { runtime: { onConnect: listener, onMessage: listener }, tabs: { onRemoved: listener, onUpdated: listener } }, URL });
     vm.runInContext(source, context);
 
     const sites = structuredClone(vm.runInContext("SITES.map(({ host, api, permission, cookieOrigins }) => ({ host, api, permission, cookieOrigins }))", context));
@@ -675,6 +683,13 @@ test("unknown message types and malformed messages are rejected", async () => {
     }
 });
 
+test("in Firefox, which lists content scripts as moz-extension:// URLs, ContApp's hosts may still open a port", async () => {
+    const { send } = loadBackground(respond(200), { firefox: true });
+
+    assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url: "https://contabilitate.contapp.ro/x" }), { ok: true, version: "9.8.7" });
+    assert.deepEqual(await send({ type: "ping" }, { id: EXTENSION_ID, url: "https://webserviced.anaf.ro/SPVWS2/rest/x" }), { ok: false, error: "forbidden_origin" }, "the login helper's hosts stay refused");
+});
+
 test("only the ContApp hosts the content script runs on may open a port", async () => {
     const { send, fetchCalls } = loadBackground(respond(200));
     const refused = [
@@ -1111,6 +1126,45 @@ test("the login tab closes once it reaches the portal, only if it is ours, and t
     assert.deepEqual(removedTabs, [101], "forgotten once closed");
     assert.deepEqual(tell({ type: "login-form" }, 101, POLICY), { submit: false });
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "kept" });
+});
+
+test("in Firefox, whose JSON viewer runs no content script, the SPV login tab closes once the worker gets an SPV answer", async () => {
+    const html = new TextEncoder().encode("<html>F5</html>");
+    let answer = html;
+    const { send, updateTab, removedTabs, fetchCalls } = loadBackground(async (url) => respond(200, answer, url)(), { firefox: true });
+    const complete = { status: "complete" };
+
+    await send({ type: "fetch", url: ANAF_URL }); // the gateway's page: the session counts as lost
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    await send({ type: "login", url: DECL_HOME }); // tab 102
+    const before = fetchCalls.length;
+
+    await updateTab(101, { status: "loading" }, { url: ANAF_URL });
+    await updateTab(101, complete, { url: "https://webserviced.anaf.ro/my.policy" });
+    await updateTab(101, complete, {});
+    await updateTab(55, complete, { url: ANAF_URL });
+    await updateTab(102, complete, { url: ANAF_URL });
+    assert.equal(fetchCalls.length, before, "nothing to ask: not loaded, not under the REST API, or not an SPV login tab");
+
+    await updateTab(101, complete, { url: ANAF_URL });
+    assert.deepEqual([fetchCalls.length - before, removedTabs], [1, []], "the gateway's HTML page is no answer");
+
+    answer = JSON_BODY;
+    await updateTab(101, complete, { url: `${ANAF_URL}&x=1` });
+    assert.equal(fetchCalls.at(-1).url, `${ANAF_URL}&x=1`);
+    assert.deepEqual(removedTabs, [101]);
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, "the session now counts as alive");
+
+    await updateTab(101, complete, { url: ANAF_URL });
+    assert.deepEqual(removedTabs, [101], "forgotten once closed");
+});
+
+test("in Chrome the SPV login tab waits for login-tab.js instead of a request of the worker's own", async () => {
+    const { send, updateTab, removedTabs, fetchCalls } = loadBackground(respond(200));
+
+    await send({ type: "login", url: ANAF_URL });
+    await updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    assert.deepEqual([fetchCalls, removedTabs], [[], []]);
 });
 
 test("a login tab F5 hangs up on closes, only if it is ours and on its own site's hangup page, and the session stays lost", async () => {
