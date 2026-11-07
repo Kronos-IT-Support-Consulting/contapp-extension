@@ -78,6 +78,10 @@ advisory warning about the Android minimum version, which is expected.
 In Firefox, whose JSON viewer runs no content script, the worker requests the address the SPV login tab loaded and
 closes the tab on an SPV answer, so both login tabs close by themselves there too.
 
+The extension does not run in private (incognito) windows (`"incognito": "not_allowed"`): a private ContApp tab would
+share the service worker, and so the regular profile's ANAF session and cookie reset, while its login tab
+authenticated in the private window.
+
 Chrome and Edge need version 119 or newer (`minimum_chrome_version`): from 110 an extension API call resets the
 service worker's idle timer, which is how the worker stays alive while an SPV response is pending, and from 119
 `chrome.cookies` takes a `partitionKey`, which the login needs to clear partitioned ANAF cookies too.
@@ -116,6 +120,21 @@ page (`Succes depunere`, `Indexul este <b>…</b>`); the page reads the outcome 
 Fields that are not strings, an empty `field`, or a `body` that is not base64 answer `network` with a `message` and
 send nothing. An upload is not idempotent: after `cancelled` or `timeout` ANAF may still have registered the
 declaration, so check before sending it again rather than retrying blindly.
+
+A failed upload carries `sent: false` when the extension knows the declaration never left the browser, and only then:
+
+- the request never reached the service worker: the extension was reloaded or unreachable, or the message was too
+  large for the runtime port (the content script adds it);
+- the upload fields were unusable, or the portal's host permission is missing;
+- the silent login failed, whatever its error (`certificate_required`, `certificate_refused`, `session_lost`,
+  `timeout`, `cancelled`, `network`): it only talks to F5, before the POST;
+- F5 turned the POST away before the portal, landing on `/my.policy` (also after the one resend) or on its hangup page.
+
+Every other failure has no `sent` field and means the outcome is unknown: the POST may have reached the portal (a
+connection that broke after it, a landing outside `/WAS6DUS/` other than F5's pages, a timeout or cancel after the
+request left). A page may file again by itself only on `sent: false`; otherwise it should look the declaration up at
+ANAF first. An older extension never sends the field, which reads as unknown, the safe side. `fetch` replies never
+carry it.
 
 An upload logs in to the portal by itself when it can, the way the F5 page would: `GET https://decl.anaf.mfinante.gov.ro/`
 (which ends on `/my.policy` without a session) and `POST /my.policy` with `vhost=standard`, where the gateway asks for
@@ -157,7 +176,9 @@ replies are unchanged.
   portal's own pages are HTML, so the body under the prefix is not checked. No body is handed over. The page should
   offer the `login` action (for an upload, with the portal's URL).
 - `timeout`: ANAF sent no response headers within 90 s, usually a handshake stuck on a certificate picker or PIN
-  prompt that never showed, or the body did not finish within 5 minutes of the headers. The request is aborted so it
+  prompt that never showed, or the body did not finish within 5 minutes of the headers. An upload's POST gets one
+  more second per 64 KiB of file before its headers are due, since they only come after the whole file went up and
+  the portal processed it (a 10 MiB PDF: about 4.5 minutes). The request is aborted so it
   stops holding one of Chrome's six connections to the host. The page should offer the `login` action. In Firefox
   this is also the answer when the certificate's app is not running: Firefox waits for it instead of sending no
   certificate, and the next request works once the app runs, without a restart.
@@ -168,8 +189,9 @@ replies are unchanged.
   missing grant. The page should ask the user to grant site access.
 - `forbidden_url`: the URL, once parsed and normalised the way `fetch` would, is not under the prefix the type
   accepts (so `…/SPVWS2/rest/../x` is refused), or its path still carries an encoded dot, slash or backslash or a `;`
-  path parameter, which the parser leaves alone but a server may resolve (`…/rest/..;/x`, `…/rest/..%2Fx`); the query
-  is not checked. The request and the login tab use the normalised URL.
+  path parameter, which the parser leaves alone but a server may resolve (`…/rest/..;/x`, `…/rest/..%2Fx`), or an
+  encoded `%` or NUL that a server could decode a second time (`%252e`, `%00`), or the URL carries a user name or
+  password; the query is not checked. The request and the login tab use the normalised URL.
 - `network`: anything else went wrong; `message` carries the error text. Besides fetch failures this covers a
   response or upload too large to hand over (above 47 MiB; an upload whose base64 exceeds Chrome's 64 MiB message
   limit, a file above about 48 MiB, is refused by the content script with Chrome's own message before anything reaches
@@ -206,7 +228,9 @@ clicks the button and closes the tab by hand. ANAF opened any other way is left 
 the content script: the tab's URL alone cannot tell a JSON answer from the gateway's HTML page under the same prefix.
 Chrome's PDF viewer runs it; Firefox's JSON viewer and pdf.js do not, so in Firefox the worker watches the login tab
 instead: once it has loaded an address under the SPV REST API, the worker requests that address itself and closes the
-tab on an SPV answer (one extra request per login; the tab's URL is readable through the host permission alone).
+tab on an SPV answer (one extra request per login; the tab's URL is readable through the host permission alone). Only
+Firefox registers that `tabs.onUpdated` listener, filtered to SPV addresses and status changes: in Chrome it would
+wake the service worker on every tab update in the browser.
 
 `reset` in the login reply says what happened to that host's ANAF session before the tab opened:
 
@@ -251,12 +275,15 @@ to reach SPV, so any change to the message shapes above must ship in both reposi
 1. **Connect the certificate** — ContApp → account menu → *Certificat SPV*. There is nothing to upload:
    click **Conectează**. The page now shows the connected state with *CNP titular* empty and
    *Nesincronizat încă*.
-2. **Verify** — click **Verifică**.
+2. **Verify** — start the certificate's app (or plug in the token) first, then click **Verifică**.
    - Without the extension: a callout *Instalează extensia ContApp* appears and the button stays
      disabled. Install, then reload the page.
    - First time in this browser session: a warning toast *ANAF a cerut certificatul…* and a callout with
      the **Autentificare ANAF** button appear. This is expected: a background request cannot show the
      certificate picker.
+   - Firefox with the certificate's app closed: the request waits until the extension's 90 s limit and ContApp
+     shows its timeout message (*ANAF nu a răspuns la timp…*). Start the app; the next try works without restarting
+     Firefox.
 3. **Authenticate at ANAF** — click **Autentificare ANAF**. A new tab opens on
    `webserviced.anaf.ro/SPVWS2/rest/listaMesaje?zile=60`. The browser shows the certificate picker;
    choose the SPV certificate, then the token asks for its PIN. The tab ends on a raw JSON page (either
@@ -264,10 +291,12 @@ to reach SPV, so any change to the message shapes above must ship in both reposi
    session cookie and remembers the certificate for this host. The extension closes the tab by itself and
    ContApp comes back, in Firefox too.
    If the tab shows an F5 `/my.policy` page instead, wait for it to redirect; if it stays blank, reload it once.
-   If no picker shows at all, or the certificate's app was closed or the PIN or code was wrong, ContApp shows
-   *ANAF nu a primit certificatul*: the browser sent no certificate and remembers that until it quits. Start the
-   certificate's app (or plug in the token), quit the browser completely (on a Mac, Cmd+Q) and log in again. Start the
-   app before the first **Autentificare ANAF** and do not close the picker.
+   If no picker shows at all, ContApp shows *ANAF nu a primit certificatul*: the browser sent no certificate,
+   because the certificate's app was not running or dropped the certificate (for example after a wrong code), the
+   token was not plugged in, or the certificate picker was closed, and Chrome and Edge remember that until they quit.
+   Start the certificate's app (or plug in the token), quit the browser completely (on a Mac, Cmd+Q) and log in
+   again. A wrong PIN by itself does not cause this: Chromium forgets the remembered choice after a signing error and
+   shows the picker again. Start the app before the first **Verifică** and do not close the picker.
    In Firefox the first **Verifică** usually needs no login tab: Firefox shows its own certificate dialog for the
    extension's request, then the PIN or code.
 4. **Back in ContApp** — the check runs again by itself once the login tab closes (or click **Verifică**). A
@@ -279,12 +308,21 @@ to reach SPV, so any change to the message shapes above must ship in both reposi
 6. **Downloads** — the sync then fetches the PDF of every message ContApp does not hold yet from
    `descarcare?id=<anaf id>` and stores it; the row shows *Descărcat* and its eye button opens the stored PDF with
    no ANAF round trip. A message whose download failed is fetched again by the next sync.
-7. **Session expiry** — when ANAF drops the session (toast *ANAF a cerut certificatul…* again), repeat
-   steps 3 and 4. Nothing is lost; synced messages and downloaded PDFs stay in ContApp.
+7. **Session expiry** — when ANAF drops the session (toast *Sesiunea SPV a expirat…* or *ANAF a cerut
+   certificatul…* again), repeat steps 3 and 4. Nothing is lost; synced messages and downloaded PDFs stay in ContApp.
 8. **Request a document** — on *Mesaje SPV* click **Cerere nouă**, pick a type (e.g. *D300*) and fill only
    the fields it asks for (year, month, reason, …), then **Trimite cererea**. The extension calls
    `cerere?tip=…&cui=<current company>…` and the toast reads *Cererea <id> a fost transmisă…*. ANAF generates
    the answer later: a following **Sincronizează SPV** lists it as a new message.
+9. **File a declaration** — on a declaration's page click **Semnează și descarcă**; once it is signed, click
+   **Încarcă în e-guvernare**. When the portal needs a login, its login tab
+   (`https://decl.anaf.mfinante.gov.ro/`) opens by itself; choose the certificate and enter the PIN, and the tab
+   closes. Back in ContApp the declaration is sent, but only when the extension reported that the earlier try was
+   certainly not sent. Success shows the toast *Declarația a fost depusă la ANAF cu indexul …* with ANAF's index.
+10. **Outcome unknown** — after a timeout, a cancel, a network error or a portal answer without an index, the
+    dialog shows *Nu știm dacă depunerea a ajuns la ANAF* with **Caută la ANAF**. That lists the company's filings
+    received at ANAF since that day (StareD112), so the admin can confirm the one that is this declaration before
+    filing again.
 
 Things that are *not* a problem: the login tab showing JSON, the PIN being asked only once per browser
 session, the service worker in `chrome://extensions` showing *inactive* between clicks.
@@ -383,9 +421,13 @@ workflow then runs the tests, builds, lints, and creates the GitHub Release with
 from the merged pull requests. Creating a release needs write access to the repository; a pushed tag is only
 released when its commit is on `main`, and once created, `v*` tags cannot be moved or deleted (ruleset *Release
 tags*). Re-running the workflow on a commit that is already released refreshes that release's assets instead of
-bumping again; a store that already holds the version will then refuse it, which the last step reports.
+bumping again; a store that already holds the version will then refuse it, which the final `result` job reports.
 
-Three more steps run only when their secrets are configured, and are skipped otherwise:
+The npm tools (web-ext, the Chrome Web Store uploader) run in their own jobs (`lint`, `cws`, `amo`), each with at most
+its own store's secrets and a read-only token. The `release` job (GitHub release, Edge upload) and the `attach` job
+(signed `.xpi` onto the release) hold the release-writing token and install no npm dependencies; files pass between
+jobs as artifacts and are checked against the digests `release` recorded. Three store uploads run only when their
+secrets are configured, and are skipped otherwise:
 
 | Step | Repository secrets |
 |---|---|
@@ -472,7 +514,9 @@ from other stores), so the Edge listing below is optional.
   pages free of scripts ContApp does not control, and drop a host from `matches` once it no longer needs SPV.
 - In Firefox the SPV login tab closes after one extra request: the worker asks for the address the tab loaded, since
   Firefox's JSON viewer runs no content script.
-- When ANAF asks for the certificate while the browser has none to offer (the certificate's app closed, the token
-  unplugged, a wrong PIN or code, a cancelled picker), Chrome and Edge remember "no certificate" for the host until
-  they quit, and no extension API can clear that: the user has to quit the browser. ContApp says so when the
-  extension answers `certificate_refused`.
+- When ANAF asks for the certificate while the browser has none to offer (the certificate's app was not running or
+  dropped the certificate, for example after a wrong code; the token was not plugged in; the certificate picker was
+  closed), Chrome and Edge remember "no certificate" for the host until they quit, and no extension API can clear
+  that: the user has to quit the browser. ContApp says so when the extension answers `certificate_refused`. A wrong
+  PIN by itself does not cause this: Chromium clears the remembered choice on a signing error and shows the picker
+  again.

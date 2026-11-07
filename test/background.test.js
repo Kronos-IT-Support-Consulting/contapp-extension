@@ -51,6 +51,7 @@ function loadBackground(fetchImpl, {
     let onMessage;
     let onTabRemoved;
     let onTabUpdated;
+    let tabUpdatedFilter;
 
     // Chrome's error text, for a cookie query shaped for Firefox.
     const unexpected = (method, details) => {
@@ -73,7 +74,7 @@ function loadBackground(fetchImpl, {
             onMessage: { addListener: (callback) => (onMessage = callback) },
             ...(firefox && { getBrowserInfo: async () => ({ name: "Firefox", vendor: "Mozilla", version: "140.0", buildID: "" }) }),
         },
-        permissions: { contains: async () => granted },
+        permissions: { contains: async () => (typeof granted === "function" ? granted() : granted) },
         tabs: {
             create: createTab ?? (async (tab) => {
                 events.push("tab");
@@ -83,7 +84,7 @@ function loadBackground(fetchImpl, {
             }),
             remove: async (tabId) => removedTabs.push(tabId),
             onRemoved: { addListener: (callback) => (onTabRemoved = callback) },
-            onUpdated: { addListener: (callback) => (onTabUpdated = callback) },
+            onUpdated: { addListener: (callback, filter) => { onTabUpdated = callback; tabUpdatedFilter = filter; } },
         },
         cookies: {
             getAll: async (query) => {
@@ -185,7 +186,7 @@ function loadBackground(fetchImpl, {
     };
 
     return {
-        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), updateTab: (tabId, changeInfo, tab) => onTabUpdated(tabId, changeInfo, tab), removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
+        send, connect, tell, closeTab: (tabId) => onTabRemoved(tabId), updateTab: async (tabId, changeInfo, tab) => onTabUpdated?.(tabId, changeInfo, tab), tabUpdatedFilter: () => tabUpdatedFilter, watchesTabs: () => onTabUpdated !== undefined, removedTabs, fetchCalls, bodies, signals, deadlines, cookieQueries, createdTabs, removedCookies, events, timers,
         keepAlives: () => keepAlives, debug, warnings, state, IDLE,
     };
 }
@@ -220,6 +221,7 @@ test("the hosts the worker fetches from are the ones the manifest asks permissio
         "the manifest asks for exactly what the session resets check for",
     );
     assert.deepEqual(manifest.permissions, ["cookies"], "only cookies, to reset ANAF's session before the login tab");
+    assert.equal(manifest.incognito, "not_allowed", "a private window would share the worker but log in on its own");
     assert.deepEqual(
         manifest.content_scripts.find(({ js }) => js.includes("login-tab.js")).matches,
         [
@@ -260,6 +262,11 @@ test("fetch and login refuse anything that does not resolve under the SPV REST A
         "https://webserviced.anaf.ro/SPVWS2/rest/..%5Cadmin",
         "https://webserviced.anaf.ro/SPVWS2/rest/x;jsessionid=1",
         "https://webserviced.anaf.ro/SPVWS2/rest/a%2eb",
+        // Encoded "%" or NUL that a server could decode a second time; credentials have no business in the URL.
+        "https://webserviced.anaf.ro/SPVWS2/rest/%252e%252e/admin",
+        "https://webserviced.anaf.ro/SPVWS2/rest/x%00",
+        "https://user:pass@webserviced.anaf.ro/SPVWS2/rest/listaMesaje",
+        "https://:pass@webserviced.anaf.ro/SPVWS2/rest/listaMesaje",
     ];
 
     for (const url of forbidden) {
@@ -932,7 +939,7 @@ test("an upload without a usable file is a network error and sends nothing", asy
     ];
 
     for (const [fields, message] of invalid) {
-        assert.deepEqual(await send(upload(fields)), { ok: false, error: "network", message }, JSON.stringify(fields));
+        assert.deepEqual(await send(upload(fields)), { ok: false, error: "network", message, sent: false }, JSON.stringify(fields));
     }
     assert.equal(fetchCalls.length, 0);
 });
@@ -944,6 +951,24 @@ test("upload refuses to run without the declaration portal's host permission", a
         ok: false,
         error: "permission",
         message: "permission for https://decl.anaf.mfinante.gov.ro/* is not granted",
+        sent: false,
+    });
+    assert.equal(fetchCalls.length, 0);
+});
+
+test("an upload refused for want of permission after a live session was not sent either", async () => {
+    let granted = true;
+    const { send, fetchCalls } = loadBackground(portal({ session: true }).impl, { granted: () => granted });
+
+    await send(upload()); // the session is now known to be alive, so the next upload skips the silent login
+    granted = false;
+    fetchCalls.length = 0;
+
+    assert.deepEqual(await send(upload()), {
+        ok: false,
+        error: "permission",
+        message: "permission for https://decl.anaf.mfinante.gov.ro/* is not granted",
+        sent: false,
     });
     assert.equal(fetchCalls.length, 0);
 });
@@ -952,14 +977,14 @@ test("without a known live session the upload logs in silently first, and sends 
     const cases = [
         ["a certificate already chosen", portal({ certificate: true }).impl, receipt, [GET_HOME, POST_POLICY, POST_UPLOAD]],
         ["still logged in", portal({ session: true }).impl, receipt, [GET_HOME, POST_UPLOAD]],
-        ["no certificate for the host yet", portal({ certificate: false }).impl, { ok: false, error: "certificate_required" }, [GET_HOME, POST_POLICY]],
-        ["the handshake already wants one", throwing("TypeError", "Failed to fetch"), { ok: false, error: "certificate_required" }, [GET_HOME]],
-        ["offline", throwing("TypeError", "Failed to fetch"), { ok: false, error: "network", message: "offline" }, [GET_HOME], { online: false }],
-        ["F5 shows its form again", () => landedOn(`${POLICY}?nonce=1`), { ok: false, error: "session_lost", message: POLICY }, [GET_HOME, POST_POLICY]],
-        ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/?a=b"), { ok: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/" }, [GET_HOME]],
-        ["the portal moved", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}WAS7DUS/`), { ok: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/` }, [GET_HOME, POST_POLICY]],
-        ["the gateway fails", throwing("Error", "boom"), { ok: false, error: "network", message: "boom" }, [GET_HOME]],
-        ["F5 hangs up: no certificate was sent", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}vdesk/hangup.php3?x`), { ok: false, error: "certificate_refused", message: `${DECL_HOME}vdesk/hangup.php3` }, [GET_HOME, POST_POLICY]],
+        ["no certificate for the host yet", portal({ certificate: false }).impl, { ok: false, sent: false, error: "certificate_required" }, [GET_HOME, POST_POLICY]],
+        ["the handshake already wants one", throwing("TypeError", "Failed to fetch"), { ok: false, sent: false, error: "certificate_required" }, [GET_HOME]],
+        ["offline", throwing("TypeError", "Failed to fetch"), { ok: false, sent: false, error: "network", message: "offline" }, [GET_HOME], { online: false }],
+        ["F5 shows its form again", () => landedOn(`${POLICY}?nonce=1`), { ok: false, sent: false, error: "session_lost", message: POLICY }, [GET_HOME, POST_POLICY]],
+        ["the root leads elsewhere", () => landedOn("http://decl.anaf.mfinante.gov.ro/?a=b"), { ok: false, sent: false, error: "session_lost", message: "http://decl.anaf.mfinante.gov.ro/" }, [GET_HOME]],
+        ["the portal moved", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}WAS7DUS/`), { ok: false, sent: false, error: "session_lost", message: `${DECL_HOME}WAS7DUS/` }, [GET_HOME, POST_POLICY]],
+        ["the gateway fails", throwing("Error", "boom"), { ok: false, sent: false, error: "network", message: "boom" }, [GET_HOME]],
+        ["F5 hangs up: no certificate was sent", (url) => landedOn(url === DECL_HOME ? `${POLICY}?x` : `${DECL_HOME}vdesk/hangup.php3?x`), { ok: false, sent: false, error: "certificate_refused", message: `${DECL_HOME}vdesk/hangup.php3` }, [GET_HOME, POST_POLICY]],
     ];
 
     for (const [name, impl, expected, calls, options] of cases) {
@@ -976,7 +1001,7 @@ test("without a known live session the upload logs in silently first, and sends 
         timed.deadlines.at(-1).callback();
         throw options.signal.reason;
     });
-    assert.deepEqual(await timed.send(upload()), { ok: false, error: "timeout" });
+    assert.deepEqual(await timed.send(upload()), { ok: false, sent: false, error: "timeout" });
     assert.equal(uploadsSent(timed.fetchCalls), 0);
 });
 
@@ -992,7 +1017,7 @@ test("an upload F5 bounced to its login page is resent exactly once after a sile
 
     // Bounced again after the re-login: not a third time.
     const again = loadBackground(portal({ session: true, upload: () => landedOn(POLICY) }).impl);
-    assert.deepEqual(await again.send(upload()), { ok: false, error: "session_lost", message: POLICY });
+    assert.deepEqual(await again.send(upload()), { ok: false, error: "session_lost", message: POLICY, sent: false });
     assert.equal(uploadsSent(again.fetchCalls), 1, "the silent login came first, so a bounce is final");
 
     // The re-login after a bounce cannot find a certificate: the page shows its login prompt.
@@ -1001,8 +1026,31 @@ test("an upload F5 bounced to its login page is resent exactly once after a sile
     await lost.send(upload());
     expiring.state.session = false;
     lost.fetchCalls.length = 0;
-    assert.deepEqual(await lost.send(upload()), { ok: false, error: "certificate_required" });
+    assert.deepEqual(await lost.send(upload()), { ok: false, error: "certificate_required", sent: false }, "the bounced POST never reached the portal");
     assert.deepEqual(lost.fetchCalls, [POST_UPLOAD, GET_HOME, POST_POLICY]);
+});
+
+test("an upload F5 hangs up on was not filed and says so, while one that may have reached the portal never does", async () => {
+    const hangup = loadBackground(portal({ session: true, upload: () => landedOn(`${DECL_HOME}vdesk/hangup.php3`) }).impl);
+    await hangup.send({ type: "fetch", url: ANAF_URL }).catch(() => {});
+    hangup.fetchCalls.length = 0;
+    // The session is not known alive yet, so the silent login runs first and succeeds; then the POST lands on hangup.
+    assert.deepEqual(await hangup.send(upload()), { ok: false, error: "certificate_refused", message: `${DECL_HOME}vdesk/hangup.php3`, sent: false });
+    assert.equal(uploadsSent(hangup.fetchCalls), 1, "not sent again");
+});
+
+test("an upload's header deadline grows with its size, a fetch keeps 90 s", async () => {
+    const big = Buffer.alloc(10 * 1024 * 1024, 1).toString("base64");
+    const { send, deadlines } = loadBackground(portal({ session: true }).impl);
+
+    await send({ type: "fetch", url: ANAF_URL }).catch(() => {});
+    const fetchDeadline = deadlines[0].ms;
+    deadlines.length = 0;
+    await send(upload({ body: big }));
+
+    assert.equal(fetchDeadline, 90_000);
+    assert.equal(deadlines[0].ms, 90_000, "the silent login is not an upload");
+    assert.equal(deadlines.find(({ ms }) => ms > 90_000)?.ms, 90_000 + 160 * 1000, "10 MiB at 64 KiB/s");
 });
 
 test("an upload that may have reached the portal is never resent", async () => {
@@ -1159,8 +1207,85 @@ test("in Firefox, whose JSON viewer runs no content script, the SPV login tab cl
     assert.deepEqual(removedTabs, [101], "forgotten once closed");
 });
 
+test("in Firefox the tab listener only hears status changes of SPV addresses", () => {
+    const { tabUpdatedFilter } = loadBackground(unreachable, { firefox: true });
+
+    assert.deepEqual(structuredClone(tabUpdatedFilter()), { urls: ["https://webserviced.anaf.ro/SPVWS2/rest/*"], properties: ["status"] });
+});
+
+test("Firefox's probe: a tab closed while it runs is not closed again, and the site's slots are freed", async () => {
+    let release;
+    const { send, updateTab, closeTab, removedTabs, state, IDLE } = loadBackground(async (url) => {
+        await new Promise((resolve) => (release = resolve));
+
+        return respond(200, JSON_BODY, url)();
+    }, { firefox: true });
+
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    const probe = updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    await new Promise((resolve) => setImmediate(resolve));
+    closeTab(101);
+    release();
+    await probe;
+
+    assert.deepEqual(removedTabs, []);
+    assert.deepEqual(state("SPV"), IDLE);
+});
+
+test("Firefox's probe: two loads while one probe runs ask ANAF once", async () => {
+    let release;
+    const { send, updateTab, removedTabs, fetchCalls } = loadBackground(async (url) => {
+        await new Promise((resolve) => (release = resolve));
+
+        return respond(200, JSON_BODY, url)();
+    }, { firefox: true });
+
+    await send({ type: "login", url: ANAF_URL });
+    const before = fetchCalls.length;
+    const first = updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    const second = updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await Promise.all([first, second]);
+
+    assert.equal(fetchCalls.length - before, 1);
+    assert.deepEqual(removedTabs, [101]);
+});
+
+test("Firefox's probe: an HTTP error under the REST prefix does not close the login tab", async () => {
+    const { send, updateTab, removedTabs } = loadBackground(respond(403, new TextEncoder().encode("<html>no</html>")), { firefox: true });
+
+    await send({ type: "login", url: ANAF_URL });
+    await updateTab(101, { status: "complete" }, { url: ANAF_URL });
+
+    assert.deepEqual(removedTabs, []);
+});
+
+test("Firefox's probe: a new login cancels it, and the old tab still closes on a later load", async () => {
+    let release;
+    const { send, updateTab, removedTabs } = loadBackground(async (url, options) => new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason));
+        release = () => resolve(respond(200, JSON_BODY, url)());
+    }), { firefox: true });
+
+    await send({ type: "login", url: ANAF_URL }); // tab 101
+    const cancelled = updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "cleared" }); // tab 102
+    await cancelled;
+    assert.deepEqual(removedTabs, []);
+
+    const later = updateTab(101, { status: "complete" }, { url: ANAF_URL });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await later;
+    assert.deepEqual(removedTabs, [101]);
+});
+
 test("in Chrome the SPV login tab waits for login-tab.js instead of a request of the worker's own", async () => {
-    const { send, updateTab, removedTabs, fetchCalls } = loadBackground(respond(200));
+    const { send, updateTab, removedTabs, fetchCalls, watchesTabs } = loadBackground(respond(200));
+
+    assert.equal(watchesTabs(), false, "no tabs.onUpdated listener: it would wake the worker on every tab update");
 
     await send({ type: "login", url: ANAF_URL });
     await updateTab(101, { status: "complete" }, { url: ANAF_URL });
@@ -1257,7 +1382,7 @@ test("each site keeps its own session: a login clears only the cookies and reque
     const { send, removedCookies, cookieQueries } = loadBackground((url, ...rest) => (url === ANAF_URL ? answered() : impl(url, ...rest)), { cookies });
 
     assert.equal((await send({ type: "fetch", url: ANAF_URL })).ok, true);
-    assert.deepEqual(await send(upload()), { ok: false, error: "certificate_required" });
+    assert.deepEqual(await send(upload()), { ok: false, error: "certificate_required", sent: false });
 
     assert.deepEqual(await send({ type: "login", url: ANAF_URL }), { ok: true, reset: "kept" }, "SPV is still alive");
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "cleared" });
@@ -1284,7 +1409,7 @@ test("a login on the portal cancels the uploads stuck on it but not the SPV fetc
 
     assert.deepEqual(await send({ type: "login", url: DECL_HOME }), { ok: true, reset: "cleared" });
     for (const reply of await Promise.all(uploads)) {
-        assert.deepEqual(reply, { ok: false, error: "cancelled" });
+        assert.deepEqual(reply, { ok: false, error: "cancelled", sent: false }, "still in the silent login");
     }
     assert.equal(uploadsSent(fetchCalls), 0);
 

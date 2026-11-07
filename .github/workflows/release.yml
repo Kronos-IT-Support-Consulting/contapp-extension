@@ -11,25 +11,62 @@ on:
         options: [patch, minor, major]
         default: patch
 
-permissions:
-  contents: write
+# Every job states what its token may do; nothing is granted by default.
+permissions: {}
 
 # One release at a time; a second run waits instead of computing the same next version.
 concurrency:
   group: release
   cancel-in-progress: false
 
+# Third-party npm code (web-ext, the Chrome Web Store uploader) only runs in `lint`, `cws` and `amo`. Each of those
+# jobs holds at most its own store's secrets and a read-only token. The jobs that hold the release-writing token
+# (`release`, `attach`) or the Edge secrets (`release`) install no npm dependencies. Files cross jobs as artifacts and
+# are checked against the digests `release` recorded before any of them could be touched.
 jobs:
-  release:
+  # web-ext lint on its own build of the same commit, with no secrets. CI lints every commit on main too; this keeps
+  # a lint failure from producing a release.
+  lint:
     runs-on: ubuntu-latest
-    # Required reviewers on this environment (Settings > Environments > store) hold the run before any step,
-    # including the GitHub release and the store uploads. Its secrets can live there instead of the repository.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: ./build.sh
+
+      # Nothing in the lockfile needs an install script.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run lint
+
+  release:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Required reviewers on this environment (Settings > Environments > store) hold this job, and the store jobs
+    # below, before any step. Its secrets can live there instead of the repository.
     environment: store
     env:
-      # Only these booleans reach every step; the secrets and the GitHub token are scoped to the steps that use them.
-      HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
-      HAS_AMO: ${{ secrets.AMO_JWT_ISSUER != '' }}
+      # A step's `if` cannot see that step's own env, so this boolean lives here; the Edge secrets stay in its step.
       HAS_EDGE: ${{ secrets.EDGE_PRODUCT_ID != '' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      chrome_sha256: ${{ steps.digests.outputs.chrome }}
+      firefox_sha256: ${{ steps.digests.outputs.firefox }}
+      # Job-level `if` cannot read secrets, so this job tells the store jobs whether theirs are configured.
+      has_cws: ${{ steps.stores.outputs.cws }}
+      has_amo: ${{ steps.stores.outputs.amo }}
+      edge: ${{ steps.edge.outcome }}
     steps:
       - name: Releases are cut from main only
         if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
@@ -52,6 +89,15 @@ jobs:
             exit 1
           fi
 
+      - name: Which stores are configured
+        id: stores
+        env:
+          HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
+          HAS_AMO: ${{ secrets.AMO_JWT_ISSUER != '' }}
+        run: |
+          echo "cws=$HAS_CWS" >> "$GITHUB_OUTPUT"
+          echo "amo=$HAS_AMO" >> "$GITHUB_OUTPUT"
+
       - name: jq is installed
         run: |
           if ! command -v jq > /dev/null; then
@@ -63,7 +109,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: npm
 
       - name: Work out the version
         id: version
@@ -106,14 +151,13 @@ jobs:
         run: |
           jq --arg v "$VERSION" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
 
-      # The tests load only node: built-ins and build.sh only uses system tools, so both run before the dependencies
-      # are even installed: the zips are built and hashed before any dependency code can run (npm run puts
-      # node_modules/.bin first on PATH, where a dependency could shadow `node` itself).
+      # The tests load only node: built-ins and build.sh only uses system tools; this job never installs the npm
+      # dependencies.
       - run: npm test
 
       - run: ./build.sh
 
-      # Step outputs are fixed once a step ends, so later (dependency) code cannot change these digests.
+      # Step and job outputs are fixed once a step ends; the other jobs check every file they receive against them.
       - name: Record the zip digests
         id: digests
         env:
@@ -132,16 +176,21 @@ jobs:
             jq -e '[.content_scripts[].matches[] | select(test("\\.test/"))] | length == 0' "dist/$target/manifest.json"
           done
 
-      # Nothing in the lockfile needs an install script. Dependency code runs from here on, in lint and the store
-      # steps, which is why the GitHub token only reaches the steps that call gh.
-      - run: npm ci --ignore-scripts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-chrome
+          path: dist/contapp-spv-chrome-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
 
-      # web-ext is dependency code: it lints a copy, never the directory the zips came from.
-      - name: Lint a copy of the Firefox build
-        run: |
-          rm -rf "$RUNNER_TEMP/lint"
-          cp -R dist/firefox "$RUNNER_TEMP/lint"
-          npx --no-install web-ext lint --source-dir "$RUNNER_TEMP/lint" --self-hosted
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-firefox
+          path: dist/contapp-spv-firefox-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
 
       - name: Create GitHub release
         env:
@@ -160,56 +209,8 @@ jobs:
             gh release create "$TAG" "${zips[@]}" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
           fi
 
-      # The three store steps all run even when one fails (a store that already has this version refuses it on a
-      # re-run); the last step turns any failure into a red job.
-      - name: Publish to the Chrome Web Store
-        id: cws
-        if: env.HAS_CWS == 'true'
-        continue-on-error: true
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
-          # Chrome Web Store API v2 addresses items as publishers/<publisher id>/items/<extension id>.
-          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
-          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
-          CHROME_SHA256: ${{ steps.digests.outputs.chrome }}
-        # chrome-webstore-upload-cli is a pinned devDependency, so npm ci already installed it from the lockfile.
-        # Without a subcommand it uploads and publishes.
-        run: |
-          zip="dist/contapp-spv-chrome-$VERSION.zip"
-          echo "$CHROME_SHA256  $zip" | /usr/bin/sha256sum --check --strict -
-          npx --no-install chrome-webstore-upload --source "$zip"
-
-      - name: Sign for Firefox (unlisted)
-        id: amo
-        if: env.HAS_AMO == 'true'
-        continue-on-error: true
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          FIREFOX_SHA256: ${{ steps.digests.outputs.firefox }}
-          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
-          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        # Signs exactly what the verified zip holds, not dist/firefox, which earlier dependency code could reach.
-        run: |
-          zip="dist/contapp-spv-firefox-$VERSION.zip"
-          echo "$FIREFOX_SHA256  $zip" | /usr/bin/sha256sum --check --strict -
-          rm -rf "$RUNNER_TEMP/amo-source" "$RUNNER_TEMP/signed"
-          unzip -q "$zip" -d "$RUNNER_TEMP/amo-source"
-          npx --no-install web-ext sign --source-dir "$RUNNER_TEMP/amo-source" --channel unlisted \
-            --artifacts-dir "$RUNNER_TEMP/signed"
-
-      # Separate from signing so the GitHub token never shares an environment with web-ext and the AMO secrets.
-      - name: Attach the signed Firefox build to the release
-        id: amo_attach
-        if: steps.amo.outcome == 'success'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: gh release upload "$TAG" "$RUNNER_TEMP"/signed/*.xpi --clobber
-
+      # Edge needs only curl, so it stays in this job. It may fail (a store that already has this version refuses it
+      # on a re-run) without stopping the other stores; the `result` job turns its failure into a red run.
       - name: Publish to Edge Add-ons
         id: edge
         if: env.HAS_EDGE == 'true'
@@ -268,15 +269,174 @@ jobs:
           [ -n "$publish" ] || { echo "::error::No operation id for the publish request"; exit 1; }
           wait_for "$api/operations/$publish"
 
+  cws:
+    needs: release
+    if: needs.release.outputs.has_cws == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    environment: store
+    steps:
+      # The lockfile pins the uploader; the checkout only provides package.json and package-lock.json.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # Fetched through the REST API (gh is preinstalled), checked against the digest `release` recorded. The token
+      # reaches only this step, before any dependency is installed.
+      - name: Fetch the Chrome zip built by the release job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+          CHROME_SHA256: ${{ needs.release.outputs.chrome_sha256 }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=release-chrome" \
+            --jq '[.artifacts[] | select(.expired | not)] | max_by(.created_at) | .id')
+          [ -n "$id" ] && [ "$id" != "null" ] || { echo "::error::No release-chrome artifact in this run"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/artifact.zip"
+          mkdir -p "$RUNNER_TEMP/release"
+          unzip -q -o "$RUNNER_TEMP/artifact.zip" -d "$RUNNER_TEMP/release"
+          echo "$CHROME_SHA256  $RUNNER_TEMP/release/contapp-spv-chrome-$VERSION.zip" | /usr/bin/sha256sum --check --strict -
+
+      # Nothing in the lockfile needs an install script.
+      - run: npm ci --ignore-scripts
+
+      - name: Publish to the Chrome Web Store
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          # Chrome Web Store API v2 addresses items as publishers/<publisher id>/items/<extension id>.
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CHROME_SHA256: ${{ needs.release.outputs.chrome_sha256 }}
+        # chrome-webstore-upload-cli is a pinned devDependency, so npm ci installed it from the lockfile.
+        # Without a subcommand it uploads and publishes.
+        run: |
+          zip="$RUNNER_TEMP/release/contapp-spv-chrome-$VERSION.zip"
+          echo "$CHROME_SHA256  $zip" | /usr/bin/sha256sum --check --strict -
+          npx --no-install chrome-webstore-upload --source "$zip"
+
+  amo:
+    needs: release
+    if: needs.release.outputs.has_amo == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    environment: store
+    outputs:
+      xpi: ${{ steps.sign.outputs.xpi }}
+      xpi_sha256: ${{ steps.sign.outputs.sha256 }}
+    steps:
+      # The lockfile pins web-ext; the checkout only provides package.json and package-lock.json.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Fetch the Firefox zip built by the release job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+          FIREFOX_SHA256: ${{ needs.release.outputs.firefox_sha256 }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=release-firefox" \
+            --jq '[.artifacts[] | select(.expired | not)] | max_by(.created_at) | .id')
+          [ -n "$id" ] && [ "$id" != "null" ] || { echo "::error::No release-firefox artifact in this run"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/artifact.zip"
+          mkdir -p "$RUNNER_TEMP/release"
+          unzip -q -o "$RUNNER_TEMP/artifact.zip" -d "$RUNNER_TEMP/release"
+          echo "$FIREFOX_SHA256  $RUNNER_TEMP/release/contapp-spv-firefox-$VERSION.zip" | /usr/bin/sha256sum --check --strict -
+
+      # Nothing in the lockfile needs an install script.
+      - run: npm ci --ignore-scripts
+
+      # Signs exactly what the verified zip holds. The digest of the signed file becomes a job output, which `attach`
+      # checks before the file goes on the release.
+      - name: Sign for Firefox (unlisted)
+        id: sign
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          FIREFOX_SHA256: ${{ needs.release.outputs.firefox_sha256 }}
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          zip="$RUNNER_TEMP/release/contapp-spv-firefox-$VERSION.zip"
+          echo "$FIREFOX_SHA256  $zip" | /usr/bin/sha256sum --check --strict -
+          rm -rf "$RUNNER_TEMP/amo-source" "$RUNNER_TEMP/signed"
+          unzip -q "$zip" -d "$RUNNER_TEMP/amo-source"
+          npx --no-install web-ext sign --source-dir "$RUNNER_TEMP/amo-source" --channel unlisted \
+            --artifacts-dir "$RUNNER_TEMP/signed"
+          shopt -s nullglob
+          xpis=("$RUNNER_TEMP"/signed/*.xpi)
+          [ "${#xpis[@]}" -eq 1 ] || { echo "::error::Expected one signed .xpi, found ${#xpis[@]}"; exit 1; }
+          echo "xpi=$(basename "${xpis[0]}")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(/usr/bin/sha256sum "${xpis[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-xpi
+          path: ${{ runner.temp }}/signed/${{ steps.sign.outputs.xpi }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  # Holds the release-writing token, runs no npm code and no checkout: it only moves the signed file AMO returned
+  # onto the release, after checking it against the digest `amo` recorded.
+  attach:
+    needs: [release, amo]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Attach the signed Firefox build to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          XPI: ${{ needs.amo.outputs.xpi }}
+          XPI_SHA256: ${{ needs.amo.outputs.xpi_sha256 }}
+        run: |
+          case "$XPI" in
+            ""|*/*|.*) echo "::error::Unexpected signed file name: '$XPI'"; exit 1 ;;
+          esac
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=signed-xpi" \
+            --jq '[.artifacts[] | select(.expired | not)] | max_by(.created_at) | .id')
+          [ -n "$id" ] && [ "$id" != "null" ] || { echo "::error::No signed-xpi artifact in this run"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/artifact.zip"
+          mkdir -p "$RUNNER_TEMP/signed"
+          unzip -q -o "$RUNNER_TEMP/artifact.zip" -d "$RUNNER_TEMP/signed"
+          echo "$XPI_SHA256  $RUNNER_TEMP/signed/$XPI" | /usr/bin/sha256sum --check --strict -
+          gh release upload "$TAG" "$RUNNER_TEMP/signed/$XPI" --clobber --repo "$GITHUB_REPOSITORY"
+
+  # The store jobs run independently, so one store refusing the version (as on a re-run) does not stop the others;
+  # this job turns any failure into a red run.
+  result:
+    needs: [lint, release, cws, amo, attach]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
       - name: Every configured store took the release
-        if: always()
         env:
           RESULTS: >-
-            cws=${{ steps.cws.outcome }} amo=${{ steps.amo.outcome }} amo-attach=${{ steps.amo_attach.outcome }}
-            edge=${{ steps.edge.outcome }}
+            lint=${{ needs.lint.result }} release=${{ needs.release.result }} edge=${{ needs.release.outputs.edge }} cws=${{ needs.cws.result }}
+            amo=${{ needs.amo.result }} amo-attach=${{ needs.attach.result }}
         run: |
           echo "$RESULTS"
-          if [[ "$RESULTS" == *failure* ]]; then
-            echo "::error::A store step failed: $RESULTS"
+          if [[ "$RESULTS" == *failure* || "$RESULTS" == *cancelled* ]]; then
+            echo "::error::A release or store job failed: $RESULTS"
             exit 1
           fi

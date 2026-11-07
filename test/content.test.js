@@ -200,6 +200,19 @@ test("answers extension when the service worker is unreachable, silent, not an o
     }
 });
 
+test("an upload that cannot reach the worker says it was not sent; a fetch does not carry the field", async () => {
+    const { context, dispatch, posted } = loadContent(() => ({ ok: true }));
+    context.chrome.runtime.connect = () => { throw new Error("Could not establish connection."); };
+
+    await dispatch({ ...request, type: "upload", field: "linkdoc", filename: "D700.pdf", contentType: "application/pdf", body: "JVBERi0=" });
+    await dispatch({ ...request, id: "43" });
+
+    assert.deepEqual(plain(posted.map((p) => p.data)), [
+        { ok: false, error: "extension", sent: false, ...envelope },
+        { ok: false, error: "extension", ...envelope, id: "43" },
+    ]);
+});
+
 test("a message the port refuses, as Chrome does above 64 MiB, answers network at once and leaves nothing pending", async () => {
     const { context, dispatch, sent, posted, ports } = loadContent(() => ({ ok: true }));
     const { connect } = context.chrome.runtime;
@@ -213,7 +226,7 @@ test("a message the port refuses, as Chrome does above 64 MiB, answers network a
 
     await dispatch({ ...request, type: "upload", field: "linkdoc", filename: "D700.pdf", contentType: "application/pdf", body: "JVBERi0=" });
 
-    assert.deepEqual(plain(posted.map((p) => p.data)), [{ ok: false, error: "network", message: refused, ...envelope }]);
+    assert.deepEqual(plain(posted.map((p) => p.data)), [{ ok: false, error: "network", message: refused, sent: false, ...envelope }]);
     assert.deepEqual([sent, ports[0].disconnected], [[], true]);
 
     // Nothing is left to cancel, and the next request opens a port of its own as usual.

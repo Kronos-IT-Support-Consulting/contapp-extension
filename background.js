@@ -38,6 +38,8 @@ const KEEP_ALIVE_MS = 25_000;
 // response headers arrive the body gets a longer deadline of its own, so a slow download of a large but healthy
 // response is not cut off while a body that stalls for good still frees its slot.
 const FETCH_TIMEOUT_MS = 90_000;
+// The slowest uplink an upload's header deadline allows for (see uploadDeadline).
+const UPLOAD_BYTES_PER_SECOND = 64 * 1024;
 const BODY_TIMEOUT_MS = 5 * 60_000;
 const TIMED_OUT = "timeout";
 const CANCELLED = "cancelled";
@@ -84,13 +86,18 @@ function allowedUrl(url, prefix) {
     let href;
     let pathname;
 
+    let username;
+    let password;
+
     try {
-        ({ href, pathname } = new URL(url));
+        ({ href, pathname, username, password } = new URL(url));
     } catch {
         return null; // not a URL at all
     }
 
-    if (/;|%2e|%2f|%5c/i.test(pathname)) {
+    // Encoded dots, slashes and backslashes, a ";" path parameter, or an encoded "%" or NUL that a server could decode
+    // again into one of them; credentials in the URL are never needed and keep a login tab from being recognised.
+    if (/;|%2e|%2f|%5c|%25|%00/i.test(pathname) || username || password) {
         return null;
     }
 
@@ -342,17 +349,19 @@ async function reauthenticate(target, signal) {
 
 // `controller` is the request's own: the page aborts it by closing the port, a login by cancelling every request
 // to the same site.
-function proxyFetch(target, url, controller) {
-    return withSlot(target, controller, (signal, onHeaders) => fetchBody(target, url, {}, signal, onHeaders));
+async function proxyFetch(target, url, controller) {
+    const { unsent, ...reply } = await withSlot(target, controller, (signal, onHeaders) => fetchBody(target, url, {}, signal, onHeaders));
+
+    return reply;
 }
 
 // Runs `work(signal, onHeaders)` holding one of the site's connection slots, under its deadlines, cancellable, and
 // records from its reply whether the site's session is alive.
-async function withSlot(target, controller, work) {
+async function withSlot(target, controller, work, headerTimeoutMs = FETCH_TIMEOUT_MS) {
     // MV3 host permissions are optional in Firefox, and Chrome withholds them under "on click" site access.
     // Without the grant, fetch fails with the same TypeError as a missing certificate.
     if (!(await chrome.permissions.contains(target.permission))) {
-        return { ok: false, error: "permission", message: `permission for ${target.permission.origins[0]} is not granted` };
+        return { ok: false, error: "permission", message: `permission for ${target.permission.origins[0]} is not granted`, unsent: true };
     }
 
     const stopKeepAlive = keepAlive();
@@ -368,11 +377,11 @@ async function withSlot(target, controller, work) {
             await acquireSlot(target, controller.signal);
             holdsSlot = true;
         } catch {
-            return { ok: false, error: CANCELLED }; // cancelled while it waited for a slot
+            return { ok: false, error: CANCELLED, unsent: true }; // cancelled while it waited for a slot
         }
 
         const abortAfter = (ms) => setTimeout(() => controller.abort(TIMED_OUT), ms);
-        deadline = abortAfter(FETCH_TIMEOUT_MS);
+        deadline = abortAfter(headerTimeoutMs);
 
         const reply = await work(controller.signal, () => {
             clearTimeout(deadline);
@@ -430,12 +439,17 @@ async function proxyUpload(url, message, controller) {
     try {
         body = multipart(message);
     } catch (error) {
-        return networkError(error);
+        return notSent(networkError(error));
     }
 
-    const login = () => withSlot(DECL, controller, (signal) => reauthenticate(DECL, signal));
+    const login = async () => {
+        const reply = await withSlot(DECL, controller, (signal) => reauthenticate(DECL, signal));
+
+        // The silent login only talks to F5: whatever it answers, the declaration has not left the browser.
+        return reply.ok ? reply : notSent(reply);
+    };
     const post = () => withSlot(DECL, controller, (signal, onHeaders) =>
-        fetchBody(DECL, url, { method: "POST", body }, signal, onHeaders));
+        fetchBody(DECL, url, { method: "POST", body }, signal, onHeaders), uploadDeadline(body));
     // Without a session known to be alive (every first upload after the worker restarts) the login comes first: a
     // bounce would cost a whole upload, and a missing certificate is answered before anything is sent.
     const loginFirst = !DECL.sessionAlive;
@@ -455,9 +469,30 @@ async function proxyUpload(url, message, controller) {
         reply = again.ok ? await post() : again;
     }
 
-    const { bounced, ...answer } = reply;
+    const { bounced, unsent, ...answer } = reply;
 
-    return answer;
+    // F5 turns a POST away before the portal when it lands on its login page or its hangup page; a request that
+    // never got its slot or permission was not made. Every other failure may have filed the declaration.
+    return !answer.ok && (bounced || unsent || answer.sent === false || answer.error === CERTIFICATE_REFUSED)
+        ? notSent(answer)
+        : answer;
+}
+
+// An upload's failure the extension knows happened before the declaration left the browser. ContApp may send such an
+// upload again; any failure without `sent: false` may have filed the declaration and must not be resent blindly.
+function notSent(reply) {
+    const { unsent, ...answer } = reply;
+
+    return { ...answer, sent: false };
+}
+
+// The response headers of an upload come only after the whole body went up and the portal processed it, so the
+// header deadline grows with the body: 90 s plus one second per 64 KiB (a 10 MiB PDF gets about four and a half
+// minutes), which keeps a slow but working uplink from ending in a timeout of unknown outcome.
+function uploadDeadline(form) {
+    const bytes = form.get(form.keys().next().value)?.size ?? 0;
+
+    return FETCH_TIMEOUT_MS + Math.ceil(bytes / UPLOAD_BYTES_PER_SECOND) * 1000;
 }
 
 // Firefox throws on cookie queries without firstPartyDomain while first-party isolation is on; null means all. Chrome
@@ -682,4 +717,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(onLoginTabMessage(message, sender));
 });
 chrome.tabs.onRemoved.addListener(forgetLoginTab);
-chrome.tabs.onUpdated.addListener(onLoginTabUpdated);
+// Only Firefox needs to watch its login tab (see onLoginTabUpdated). Chrome would wake the service worker for every
+// tab update in the browser, and it rejects a filter; Firefox's filter limits the events to SPV addresses.
+if (isFirefox()) {
+    chrome.tabs.onUpdated.addListener(onLoginTabUpdated, { urls: [`${SPV.api}*`], properties: ["status"] });
+}

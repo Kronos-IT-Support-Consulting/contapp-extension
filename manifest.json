@@ -4,6 +4,7 @@
     "version": "1.0.0",
     "description": "Permite ContApp să folosească serviciile ANAF (mesaje SPV, depunerea declarațiilor) cu certificatul digital din browser.",
     "permissions": ["cookies"],
+    "incognito": "not_allowed",
     "host_permissions": ["*://webserviced.anaf.ro/*", "*://anaf.ro/*", "*://decl.anaf.mfinante.gov.ro/*"],
     "minimum_chrome_version": "119",
     "background": {
