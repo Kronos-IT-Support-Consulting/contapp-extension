@@ -82,7 +82,7 @@ function relay(id, message) {
         try {
             port = chrome.runtime.connect({ name: CHANNEL });
         } catch (error) {
-            console.debug("ContApp SPV extension unreachable", error);
+            console.debug("ContApp extension unreachable", error);
             resolve(orphaned() ? detach() : { ok: false, error: "extension" });
 
             return;

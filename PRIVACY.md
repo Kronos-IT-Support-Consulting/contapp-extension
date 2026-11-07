@@ -1,8 +1,8 @@
-# Politica de confidențialitate — extensia ContApp SPV
+# Politica de confidențialitate — extensia ContApp
 
-Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 06.11.2026 · [English version below](#privacy-policy--contapp-spv-extension)
+Data intrării în vigoare: 14.10.2026 · Ultima actualizare: 07.11.2026 · [English version below](#privacy-policy--contapp-extension)
 
-Această politică explică ce date prelucrează extensia de browser **ContApp SPV**, de ce, pe ce temei și ce drepturi
+Această politică explică ce date prelucrează extensia de browser **ContApp**, de ce, pe ce temei și ce drepturi
 aveți, conform art. 13 din Regulamentul (UE) 2016/679 (GDPR). Ea completează
 [Politica de confidențialitate ContApp](https://contapp.ro/politica-de-confidentialitate/),
 [Termenii și condițiile](https://contapp.ro/termeni-si-conditii/) și
@@ -149,9 +149,9 @@ Personal (ANSPDCP), B-dul G-ral. Gheorghe Magheru nr. 28-30, sector 1, cod poșt
 
 ## 10. Dezinstalare
 
-- Chrome: `chrome://extensions` → ContApp SPV → Eliminați.
-- Edge: `edge://extensions` → ContApp SPV → Eliminați.
-- Firefox: `about:addons` → ContApp SPV → Eliminați.
+- Chrome: `chrome://extensions` → ContApp → Eliminați.
+- Edge: `edge://extensions` → ContApp → Eliminați.
+- Firefox: `about:addons` → ContApp → Eliminați.
 
 Dezinstalarea nu șterge nimic din ContApp: mesajele și documentele sincronizate rămân în cont. Pentru ștergerea lor,
 vedeți secțiunea 9.
@@ -163,11 +163,11 @@ nouă a extensiei ar prelucra date în alt mod, actualizăm politica înainte de
 
 ---
 
-# Privacy policy — ContApp SPV extension
+# Privacy policy — ContApp extension
 
-Effective date: 14 October 2026 · Last updated: 6 November 2026
+Effective date: 14 October 2026 · Last updated: 7 November 2026
 
-This policy explains what data the **ContApp SPV** browser extension processes, why, on what legal basis and what
+This policy explains what data the **ContApp** browser extension processes, why, on what legal basis and what
 rights you have, under Article 13 of Regulation (EU) 2016/679 (GDPR). It supplements the
 [ContApp privacy policy](https://contapp.ro/politica-de-confidentialitate/), the
 [terms and conditions](https://contapp.ro/termeni-si-conditii/) and the
@@ -308,9 +308,9 @@ postal code 010336, Bucharest, [anspdcp@dataprotection.ro](mailto:anspdcp@datapr
 
 ## 10. Uninstalling
 
-- Chrome: `chrome://extensions` → ContApp SPV → Remove.
-- Edge: `edge://extensions` → ContApp SPV → Remove.
-- Firefox: `about:addons` → ContApp SPV → Remove.
+- Chrome: `chrome://extensions` → ContApp → Remove.
+- Edge: `edge://extensions` → ContApp → Remove.
+- Firefox: `about:addons` → ContApp → Remove.
 
 Uninstalling deletes nothing in ContApp: synced messages and documents stay in your account. To have them deleted,
 see section 9.

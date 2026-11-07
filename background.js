@@ -230,7 +230,7 @@ async function request(url, init, signal) {
             return { failure: navigator.onLine === false ? networkError("offline") : { ok: false, error: "certificate_required" } };
         }
 
-        console.debug("ContApp SPV fetch failed", error);
+        console.debug("ContApp fetch failed", error);
 
         return { failure: networkError(error) };
     }
@@ -271,7 +271,7 @@ async function fetchBody(target, url, init, signal, onHeaders) {
 
         return { ok: true, status: response.status, url: response.url, body: toBase64(buffer) };
     } catch (error) {
-        console.debug("ContApp SPV body read failed", error);
+        console.debug("ContApp body read failed", error);
 
         return networkError(error);
     }
@@ -484,7 +484,7 @@ async function resetLostSession(target) {
 
         return { reset: "cleared" };
     } catch (error) {
-        console.warn("ContApp SPV could not clear the ANAF session", error);
+        console.warn("ContApp could not clear the ANAF session", error);
 
         return { reset: "failed", message: String(error?.message ?? error) };
     }
@@ -545,7 +545,7 @@ function onLoginTabMessage(message, sender) {
     if (message?.type === "login-landed" && allowedUrl(sender.url, tab.target.api)) {
         forgetLoginTab(tabId);
         tab.target.sessionAlive = true;
-        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp SPV could not close the login tab", error));
+        chrome.tabs.remove(tabId).catch((error) => console.debug("ContApp could not close the login tab", error));
     }
 
     return { submit: false };
@@ -607,7 +607,7 @@ chrome.runtime.onConnect.addListener((port) => {
     });
     port.onMessage.addListener((message) => {
         handle(message, controller, port.sender).then(answer, (error) => {
-            console.debug("ContApp SPV handler failed", error);
+            console.debug("ContApp handler failed", error);
             answer(networkError(error));
         });
     });

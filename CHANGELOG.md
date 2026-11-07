@@ -25,11 +25,16 @@ All notable changes to this project are documented here. The format is based on
   that answer from F5's HTML page. SPV's login has no form to submit. Privacy policy and store texts describe it.
 - An upload's `session_lost` (and a failed silent login) carries the URL ANAF ended on in `message`, and an upload's
   `forbidden_url` the refused URL, both without the query, so ContApp can tell when the portal moves.
-- `build.sh` also writes `dist/chrome-dev` and `dist/firefox-dev` ("ContApp SPV (dev)"), which keep the local
+- `build.sh` also writes `dist/chrome-dev` and `dist/firefox-dev` ("ContApp (dev)"), which keep the local
   `contapp.test` hosts for testing against a local ContApp; CI attaches their zips, releases never publish them.
 
 ### Changed
 
+- The extension is called **ContApp** instead of *ContApp SPV*, since it does more than read SPV: the manifest
+  `name` (the dev builds are "ContApp (dev)") and `description` (now naming SPV messages and declaration filing),
+  the log prefixes, README, privacy and security policies and store texts. The icons drop the "SPV" badge and show
+  the ContApp mark alone; the store icon and the 440×280 promo tile are redrawn to match. The gecko ids, the page
+  protocol (`contapp-spv` channel, `data-spv-extension`), the repository and the release zip names are unchanged.
 - The content script only runs on `https://{account,contabilitate,declaratiaunica}.contapp.ro/*`, and the service worker only answers this extension's content script on
   those hosts (`forbidden_origin` otherwise).
 - Each request travels over its own runtime port. The page can send `{type:"cancel", id}`, and a tab that closes or

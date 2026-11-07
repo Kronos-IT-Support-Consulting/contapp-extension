@@ -1,4 +1,4 @@
-# Store listing — ContApp SPV
+# Store listing — ContApp
 
 Everything to copy-paste when creating the store items by hand. After the first submission the release workflow
 only ships new versions; these texts change only when edited here.
@@ -7,7 +7,7 @@ only ships new versions; these texts change only when edited here.
 
 | Field | Value                                                                          |
 |---|--------------------------------------------------------------------------------|
-| Name | `ContApp SPV`                                                                  |
+| Name | `ContApp`                                                                      |
 | Category | Productivity (if a subcategory is asked, pick the closest workflow/tools one)  |
 | Language | Romanian                                                                       |
 | Homepage | `https://contapp.ro`                                                           |
@@ -23,22 +23,22 @@ one in `manifest.json`. Change both together. Chrome only offers a listing in th
 directory, and the extension ships none, so on the Chrome Web Store the EN texts below cannot be entered; they are for
 Edge Partner Center (which has its own per-language fields) and for AMO if a listing is ever created.
 
-RO (92 characters):
+RO (120 characters):
 
 ```
-Permite ContApp să citească mesajele din SPV ANAF folosind certificatul digital din browser.
+Permite ContApp să folosească serviciile ANAF (mesaje SPV, depunerea declarațiilor) cu certificatul digital din browser.
 ```
 
-EN (90 characters):
+EN (119 characters):
 
 ```
-Lets ContApp read ANAF SPV messages using the digital certificate already in your browser.
+Lets ContApp use ANAF services (SPV messages, declaration filing) with the digital certificate already in your browser.
 ```
 
 ### Detailed description — RO
 
 ```
-ContApp SPV conectează aplicația ContApp la Spațiul Privat Virtual (SPV) al ANAF folosind certificatul digital calificat pe care îl aveți deja în browser (token USB sau certificat în cloud).
+Extensia ContApp conectează aplicația ContApp la serviciile ANAF care cer certificatul digital, Spațiul Privat Virtual (SPV) și portalul de depunere a declarațiilor, folosind certificatul digital calificat pe care îl aveți deja în browser (token USB sau certificat în cloud).
 
 Ce face
 • Citește lista mesajelor din SPV, ca să le vedeți în ContApp la firma potrivită.
@@ -46,7 +46,7 @@ Ce face
 • Trimite către ANAF cererile de documente completate în ContApp; răspunsul apare ulterior ca mesaj nou.
 • Depune la ANAF, pe portalul de declarații, declarația PDF semnată pe care o alegeți în ContApp și predă paginii ContApp confirmarea depunerii, cu indexul de înregistrare.
 
-Serviciul SPV și portalul de declarații ale ANAF răspund numai după autentificarea cu certificat, iar o pagină web nu poate citi singură răspunsul. Extensia face legătura: pagina ContApp îi cere o adresă din serviciul SPV, browserul face autentificarea cu certificatul, iar extensia predă răspunsul ANAF, neschimbat, paginii ContApp.
+Serviciul SPV și portalul de declarații ale ANAF răspund numai după autentificarea cu certificat, iar o pagină web nu poate citi singură răspunsul. Extensia face legătura: pagina ContApp îi cere o adresă ANAF (din serviciul SPV sau de pe portalul de declarații), browserul face autentificarea cu certificatul, iar extensia predă răspunsul ANAF, neschimbat, paginii ContApp.
 
 Pentru cine este
 Pentru clienții ContApp (firme și contabili) care au un certificat digital cu acces la SPV. Aveți nevoie de un cont ContApp și de certificat pe calculatorul respectiv, cu programul tokenului sau al semnăturii în cloud instalat. Fără un cont ContApp, extensia nu are nicio utilitate.
@@ -59,7 +59,7 @@ Ce nu face
 • Nu folosește analiză de trafic, reclame sau cod încărcat de pe internet.
 
 Instalare și dezinstalare
-Instalați extensia din ContApp: pagina Certificat SPV afișează mesajul „Instalează extensia ContApp SPV” cu legătura de instalare. După instalare reîncărcați pagina ContApp. Pentru dezinstalare: pagina de extensii a browserului → ContApp SPV → Eliminați. Mesajele și documentele deja sincronizate rămân în ContApp.
+Instalați extensia din ContApp: pagina Certificat SPV afișează mesajul „Instalează extensia ContApp” cu legătura de instalare. După instalare reîncărcați pagina ContApp. Pentru dezinstalare: pagina de extensii a browserului → ContApp → Eliminați. Mesajele și documentele deja sincronizate rămân în ContApp.
 
 Suport: suport@contapp.ro
 ```
@@ -67,7 +67,7 @@ Suport: suport@contapp.ro
 ### Detailed description — EN
 
 ```
-ContApp SPV connects the ContApp application to ANAF's Virtual Private Space (SPV), the Romanian tax authority's online inbox, using the qualified digital certificate you already have in your browser (USB token or cloud certificate).
+The ContApp extension connects the ContApp application to the ANAF services that require a digital certificate, the Virtual Private Space (SPV, the Romanian tax authority's online inbox) and the declaration filing portal, using the qualified digital certificate you already have in your browser (USB token or cloud certificate).
 
 What it does
 • Reads the SPV message list, so you see the messages in ContApp under the right company.
@@ -75,7 +75,7 @@ What it does
 • Sends to ANAF the document requests you fill in on ContApp; the answer later arrives as a new message.
 • Files with ANAF, on its declaration portal, the signed PDF declaration you choose in ContApp, and hands the filing confirmation with its registration index back to the ContApp page.
 
-ANAF's SPV service and declaration portal only answer after certificate authentication, and a web page cannot read the answer by itself. The extension bridges the gap: the ContApp page asks it for an SPV address, the browser performs the certificate authentication, and the extension hands ANAF's response, unchanged, back to the ContApp page.
+ANAF's SPV service and declaration portal only answer after certificate authentication, and a web page cannot read the answer by itself. The extension bridges the gap: the ContApp page asks it for an ANAF address (in the SPV service or on the declaration portal), the browser performs the certificate authentication, and the extension hands ANAF's response, unchanged, back to the ContApp page.
 
 Who it is for
 ContApp customers (businesses and accountants) who hold a digital certificate with SPV access. You need a ContApp account and the certificate on that computer, with the token or cloud-signature software installed. Without a ContApp account the extension does nothing useful.
@@ -88,7 +88,7 @@ What it does not do
 • It uses no analytics, no advertising and no code loaded from the internet.
 
 Install and uninstall
-Install the extension from ContApp: the SPV certificate page shows the "Instalează extensia ContApp SPV" callout with the install link. Reload the ContApp page after installing. To uninstall: the browser's extensions page → ContApp SPV → Remove. Messages and documents already synced stay in ContApp.
+Install the extension from ContApp: the SPV certificate page shows the "Instalează extensia ContApp" callout with the install link. Reload the ContApp page after installing. To uninstall: the browser's extensions page → ContApp → Remove. Messages and documents already synced stay in ContApp.
 
 Support: suport@contapp.ro
 ```
@@ -180,7 +180,7 @@ Privacy policy URL: `https://kronos-it-support-consulting.github.io/contapp-spv-
 ### Notes for the reviewer
 
 ```
-ContApp SPV is a companion extension for ContApp (https://contapp.ro), an online accounting application for Romanian businesses and accountants. It is distributed unlisted and installed from inside the ContApp app.
+The ContApp extension is a companion extension for ContApp (https://contapp.ro), an online accounting application for Romanian businesses and accountants. It is distributed unlisted and installed from inside the ContApp app.
 
 Testing it end to end needs two things a reviewer normally does not have: a ContApp account and a Romanian qualified digital certificate with access to ANAF's SPV (Spațiul Privat Virtual) on a USB token or cloud HSM. The flow is:
 1. In ContApp, the SPV certificate page detects the extension (the content script sets <html data-spv-extension="<version>">).
@@ -223,7 +223,7 @@ unlisted / self-distributed, with no listing page.
 If AMO asks for review notes or source code:
 
 ```
-ContApp SPV is a companion extension for ContApp (https://contapp.ro), a Romanian online accounting application. It relays requests from ContApp pages to ANAF's SPV web service (https://webserviced.anaf.ro/SPVWS2/rest/), and the signed PDF declarations the user chooses to file to ANAF's declaration portal (https://decl.anaf.mfinante.gov.ro/WAS6DUS/), so the browser can authenticate with the user's client certificate, and returns the raw response to the ContApp page. It stores nothing itself; because the relayed SPV responses carry the certificate holder's CNP, CUIs and tax documents, and filed declarations carry tax and personal data, which the ContApp page then stores in the user's account, the manifest declares data_collection_permissions.required = [personallyIdentifyingInfo, financialAndPaymentInfo] (Firefox 140+ shows this in the install prompt).
+The ContApp extension is a companion extension for ContApp (https://contapp.ro), a Romanian online accounting application. It relays requests from ContApp pages to ANAF's SPV web service (https://webserviced.anaf.ro/SPVWS2/rest/), and the signed PDF declarations the user chooses to file to ANAF's declaration portal (https://decl.anaf.mfinante.gov.ro/WAS6DUS/), so the browser can authenticate with the user's client certificate, and returns the raw response to the ContApp page. It stores nothing itself; because the relayed SPV responses carry the certificate holder's CNP, CUIs and tax documents, and filed declarations carry tax and personal data, which the ContApp page then stores in the user's account, the manifest declares data_collection_permissions.required = [personallyIdentifyingInfo, financialAndPaymentInfo] (Firefox 140+ shows this in the install prompt).
 
 Source: https://github.com/Kronos-IT-Support-Consulting/contapp-spv-extension (public). There is no transpilation, bundling or minification: build.sh copies background.js, content.js and the PNG icons into dist/firefox and uses jq to rewrite manifest.json (background.scripts instead of background.service_worker, plus the data_collection_permissions declaration). To reproduce: ./build.sh (requires jq and zip).
 
